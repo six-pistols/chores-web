@@ -61,6 +61,8 @@ async function load() {
   S.tasks = tasks.data.tasks || [];
   S.gym = { ...GYM_DEFAULTS, ...gym.data };
   S.busy = phone.data.busy || {};
+  S.days = phone.data.days || {};
+  S.weather = phone.data.weather || null;
   S.busyNote = phone.data.generated ? `Calendar from your PC, ${dayName(phone.data.generated.slice(0, 10)).toLowerCase()} ${phone.data.generated.slice(11, 16)}` : "";
   S.loaded = new Date();
   render();
@@ -126,6 +128,7 @@ function viewToday() {
   const sub = due.length ? `${due.length} to do${late ? ` · ${late} late` : ""}` : "All done for today";
   const [, m, d] = t0.split("-").map(Number);
   const out = [header(`${L.LONG[L.weekday(t0)]} ${d} ${L.MONTHS[m - 1]}`, sub)];
+  out.push(todayCard(t0));
 
   const g = gymWeek(L.mondayOf(t0))[L.weekday(t0)];
   if (g.status === G.PLANNED || g.status === G.DONE) {
@@ -162,16 +165,63 @@ function viewToday() {
   for (let i = 1; i <= 7; i++) {
     const x = L.addDays(t0, i);
     const gd = gymWeek(L.mondayOf(x))[L.weekday(x)];
-    const names = (byDay[x] || []).slice();
-    if (gd.status === G.PLANNED) names.unshift(`Gym ${S.gym.time}`);
-    if (!names.length) continue;
+    const info = S.days[x] || {};
+    const pills = [
+      ...(info.partner || []).map(([a, b, eve]) => pill("partner", `Partner ${a}–${b}${eve ? " · evening" : ""}`)),
+      ...(info.events || []).map((e) => pill("event", e)),
+      gd.status === G.PLANNED ? pill("gym", `Gym ${S.gym.time}`) : null,
+      info.dinner ? pill("dinner", info.dinner) : null,
+      ...(byDay[x] || []).map((n) => pill("chore", n)),
+    ].filter(Boolean);
+    if (!pills.length) continue;
     any = true;
-    ahead.append(el("div", { class: "day" }, el("div", { class: "when" }, dayName(x)),
-      el("div", { class: "grow" }, ...names.map((n) => el("div", { class: n.startsWith("Gym ") ? "gym" : "" }, n)))));
+    const w = info.weather;
+    ahead.append(el("div", { class: "day" },
+      el("div", { class: "when" }, dayName(x), w ? el("div", { class: "wx" }, `${WX[w.icon] || ""} ${w.max}°`) : null),
+      el("div", { class: "grow pills" }, ...pills)));
   }
   if (!any) ahead.append(el("p", { class: "empty" }, "Nothing in the next 7 days."));
   out.push(ahead);
   return out;
+}
+
+const WX = { w_sun: "☀️", w_partly: "⛅", w_cloud: "☁️", w_rain: "🌧️", w_snow: "🌨️", w_thunder: "⛈️", w_fog: "🌫️", w_wind: "💨" };
+const pill = (kind, text) => el("span", { class: `pill ${kind}` }, text);
+
+// Today at a glance: weather, whether your partner works (and is away at dinner), your calendar, dinner.
+function todayCard(t0) {
+  const info = S.days[t0];
+  const box = el("section", { class: "card glance" });
+  const w = S.weather, wd = info && info.weather;
+  if (w || wd) {
+    box.append(el("div", { class: "wxrow" },
+      el("span", { class: "wxicon" }, WX[(w || wd).icon] || "🌡️"),
+      el("div", { class: "grow" },
+        el("div", { class: "title" }, w ? `${w.temp}° ${w.text}` : `${wd.max}° / ${wd.min}°`),
+        el("div", { class: "sub" }, [w && w.place, wd && `high ${wd.max}°, low ${wd.min}°`].filter(Boolean).join(" · ")))));
+  }
+  if (!info) {
+    box.append(el("p", { class: "empty" }, "Open the PC app once today to see shifts and plans here."));
+    return box;
+  }
+  const shifts = info.partner || [];
+  const evening = shifts.some((x) => x[2]);
+  let head, sub, mood;
+  if (shifts.length) {
+    head = evening ? "Partner works this evening" : "Partner works, home for dinner";
+    sub = shifts.map(([a, b]) => `${a}–${b}`).join(", ");
+    mood = evening ? "away" : "work";
+  } else if (info.partner_known) {
+    head = "Partner is off today"; sub = "Home all day"; mood = "home";
+  } else {
+    head = "Partner's schedule not known yet"; sub = "No shifts published for today"; mood = "unknown";
+  }
+  box.append(el("div", { class: `who ${mood}` },
+    el("span", { class: "badge" }, mood === "away" ? "🌙" : mood === "work" ? "💼" : mood === "home" ? "🏠" : "❔"),
+    el("div", { class: "grow" }, el("div", { class: "title" }, head), el("div", { class: "sub" }, sub))));
+  const plans = [...(info.events || []).map((e) => pill("event", e)), info.dinner ? pill("dinner", `Dinner: ${info.dinner}`) : null].filter(Boolean);
+  if (plans.length) box.append(el("div", { class: "pills plans" }, ...plans));
+  return box;
 }
 
 const STATUS = {
@@ -280,7 +330,12 @@ function demoStore() {
       { id: "a4", name: "Water plants", rule: { type: "every", n: 4, unit: "days", anchor: t0 }, next_due: L.addDays(t0, 2), minutes: 10, active: true, history: [] },
     ] },
     "gym.json": { ...GYM_DEFAULTS, done: [L.addDays(t0, -1)] },
-    "phone.json": { generated: new Date().toISOString(), busy: { [L.addDays(t0, 3)]: ["hard", "18:00 Dinner"] } },
+    "phone.json": { generated: new Date().toISOString(), busy: { [L.addDays(t0, 3)]: ["hard", "18:00 Dinner"] },
+      weather: { temp: 7, text: "Cloudy", icon: "w_cloud", place: "Malmö" },
+      days: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((i) => [L.addDays(t0, i), {
+        partner: i === 0 ? [["11:30", "21:00", true]] : i % 2 ? [["11:30", "16:00", false]] : [],
+        partner_known: i < 5, events: i === 3 ? ["18:00 Dinner"] : [], dinner: i === 0 ? "Tacos" : undefined,
+        weather: { icon: ["w_rain", "w_cloud", "w_partly", "w_sun"][i % 4], max: 8 - i, min: 3 - i } }])) },
     "inbox.txt": "",
   };
   const copy = (x) => JSON.parse(JSON.stringify(x));
