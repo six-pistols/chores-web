@@ -233,9 +233,14 @@ function viewAdd() {
       ...ex.map((x) => el("button", { class: "chip", onclick: () => { input.value = x; input.focus(); } }, x)))];
 }
 
+let shownTab = null;
 function render() {
   const main = $("main");
   main.replaceChildren(...({ today: viewToday, gym: viewGym, add: viewAdd }[S.tab])());
+  if (shownTab !== S.tab) {        // animate only when the view changes, not after every tap
+    main.classList.remove("enter"); void main.offsetWidth; main.classList.add("enter");
+    shownTab = S.tab;
+  }
   for (const b of document.querySelectorAll("nav button")) b.classList.toggle("on", b.dataset.tab === S.tab);
 }
 
