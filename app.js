@@ -261,7 +261,7 @@ const DINNER_AT = "19:00";
 // Same rule as the PC: still at work at dinner time = evening shift.
 function shiftKind(a, b) {
   const evening = a < DINNER_AT && b >= DINNER_AT || b < a;
-  return !evening ? "lunch shift" : a < "14:00" ? "lunch + evening shift" : "evening shift";
+  return !evening ? "lunch shift" : a < "14:00" ? "double shift" : "evening shift";
 }
 const nowHM = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`; };
 const splitTime = (line) => { const m = /^(\d{1,2}[:.]\d{2})\s+(.*)$/.exec(line); return m ? [m[1].replace(".", ":").padStart(5, "0"), m[2]] : [null, line]; };
@@ -307,7 +307,7 @@ function timeline(t0) {
   const shifts = info.partner || [];
   const away = shifts.some((x) => x[2]);
   for (const [a, b] of shifts) {
-    ev.push({ at: a, title: `Partner: ${shiftKind(a, b)}`, sub: `until ${b}`, kind: "partner" });
+    ev.push({ at: a, title: `Partner ${shiftKind(a, b)}`, sub: `until ${b}`, kind: "partner" });
     ev.push({ at: b, title: "Partner home", kind: "partner end" });
   }
   const g = gymWeek(L.mondayOf(t0))[L.weekday(t0)];
@@ -385,7 +385,7 @@ function thisWeek(t0) {
     const gd = gymWeek(L.mondayOf(x))[L.weekday(x)];
     const info = S.days[x] || {};
     const bits = [];
-    for (const [a, b, eve] of info.partner || []) bits.push(el("span", { class: "partner" }, `Partner ${shiftKind(a, b).replace(" shift", "")} ${a}–${b}${eve ? " 🌙" : ""}`));
+    for (const [a, b, eve] of info.partner || []) bits.push(el("span", { class: "partner" }, `Partner ${shiftKind(a, b)} ${a}–${b}${eve ? " 🌙" : ""}`));
     if (!(info.partner || []).length && info.partner_known) bits.push(el("span", { class: "home" }, "Partner off"));
     if (gd.status === G.PLANNED || gd.status === G.DONE) bits.push(el("span", { class: "gym" }, `Gym ${labels[x] || S.gym.time}`));
     for (const e of info.events || []) bits.push(el("span", { class: "event" }, e));
