@@ -181,3 +181,37 @@ body.working header button.icon { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .updated { font-size: 12px; color: var(--mut); margin: 10px 0 0 4px; }
 .updated.late { color: var(--late); }
+
+/* ---- gym: next session, groups, sheets, weight, stats */
+.caps { text-transform: uppercase; letter-spacing: .5px; font-weight: 650; font-size: 11px; }
+.big { font-size: 24px; font-weight: 750; color: var(--ink); letter-spacing: -.3px; }
+.card.next .pills { margin: 10px 0 4px; }
+.groups-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 14px 0 4px; }
+.grp { padding: 8px 10px; border-radius: 14px; box-shadow: var(--press-sm); display: flex; flex-direction: column; }
+.grp b { font-size: 13px; color: var(--ink); } .grp span { font-size: 11px; font-weight: 600; }
+.grp.fresh span { color: var(--c-gym); } .grp.soon span { color: var(--c-dinner); } .grp.due span { color: var(--late); } .grp.never span { color: var(--mut); }
+button.wide { width: 100%; margin-top: 12px; }
+.row.end { justify-content: flex-end; gap: 10px; margin-top: 16px; }
+.tl-weigh { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 16px; box-shadow: var(--press-sm); margin-bottom: 12px; }
+.tl-weigh > span { font-size: 22px; }
+.sheet-wrap { position: fixed; inset: 0; z-index: 10; background: rgba(20, 24, 33, .35); display: flex; align-items: flex-end; animation: fade .2s ease both; }
+.sheet { width: 100%; max-width: 640px; margin: 0 auto; background: var(--bg); border-radius: 28px 28px 0 0; box-shadow: 0 -10px 30px rgba(0,0,0,.18);
+  padding: 10px 20px calc(env(safe-area-inset-bottom) + 20px); animation: up .3s var(--ease) both; max-height: 90vh; overflow: auto; }
+.sheet .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--lo); opacity: .6; margin: 4px auto 14px; }
+.sheet h2 { font-size: 19px; } .sheet > .sub { margin: -2px 0 14px; }
+@keyframes up { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.split-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.split-grid button { min-height: 58px; border-radius: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; line-height: 1.2; }
+.split-grid small { font-size: 11px; font-weight: 600; opacity: .85; }
+.pills.groups { gap: 8px; } .pills.groups button.chip { margin: 0; min-height: 40px; }
+button.chip.on { box-shadow: var(--press-sm); color: var(--accent); font-weight: 700; }
+input.kg { font-size: 22px; font-weight: 700; text-align: center; max-width: 160px; }
+.unit { font-size: 18px; color: var(--mut); font-weight: 600; }
+.spark { width: 120px; height: 44px; color: var(--accent); flex: none; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; margin: 4px 0 14px; }
+.stats b { display: block; font-size: 22px; color: var(--ink); } .stats span { font-size: 11px; color: var(--mut); font-weight: 600; }
+.bars { display: flex; align-items: flex-end; gap: 6px; height: 90px; padding: 0 2px; }
+.bar { flex: 1; border-radius: 8px 8px 4px 4px; background: color-mix(in srgb, var(--accent) 30%, var(--bg)); position: relative; min-height: 4px; }
+.bar.ok { background: color-mix(in srgb, var(--c-gym) 60%, var(--bg)); } .bar.now { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bar span { position: absolute; top: -17px; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 700; color: var(--text); }

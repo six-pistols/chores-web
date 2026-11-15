@@ -3,7 +3,8 @@
 
 const L = Logic;
 const G = L.GYM;
-const GYM_DEFAULTS = { goal: 3, time: "17:00", minutes: 75, prefer: [], done: [], picked: [], skipped: [] };
+const GYM_DEFAULTS = { goal: 3, time: "17:00", minutes: 75, prefer: [], done: [], picked: [], skipped: [],
+  splits: L.ROUTINE, sessions: {}, weights: {}, weigh_every: 14 };
 const DEMO = new URLSearchParams(location.search).has("demo") && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const Store = DEMO ? demoStore() : Cloud;
 
@@ -114,6 +115,77 @@ async function changeGym(fn, text) {
 
 const gymBusy = (iso) => S.busy[iso] || null;
 const gymWeek = (monday) => L.planWeek(S.gym, monday, today(), gymBusy);
+const cap1 = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+const pill = (kind, text) => el("span", { class: `pill ${kind}` }, text);
+function sessionLabel(groups) {
+  const set = new Set(groups);
+  for (const sp of S.gym.splits) if (sp.groups.length === set.size && sp.groups.every((g) => set.has(g))) return sp.name;
+  return cap1(groups.join(", "));
+}
+// {iso: what to train / what was trained} for done and planned gym days from today over n days
+function gymLabels(n = 14) {
+  const t0 = today(), out = {}, planned = [];
+  for (let i = 0; i < n; i++) {
+    const x = L.addDays(t0, i), e = gymWeek(L.mondayOf(x))[L.weekday(x)];
+    if (e.status === G.DONE && S.gym.sessions[x]) out[x] = sessionLabel(S.gym.sessions[x]);
+    if (e.status === G.PLANNED) planned.push(x);
+  }
+  for (const [x, i] of Object.entries(L.planSplits(S.gym, planned))) if (i >= 0) out[x] = S.gym.splits[i].name;
+  for (const [x, gs] of Object.entries(S.gym.sessions)) if (!out[x]) out[x] = sessionLabel(gs);
+  return out;
+}
+
+// ---------------------------------------------------------------- bottom sheets
+function sheet(title, sub, ...body) {
+  const close = () => wrap.remove();
+  const wrap = el("div", { class: "sheet-wrap", onclick: (e) => { if (e.target === wrap) close(); } },
+    el("div", { class: "sheet" }, el("div", { class: "grab" }), el("h2", {}, title), sub ? el("p", { class: "sub" }, sub) : null, ...body));
+  document.body.append(wrap);
+  return close;
+}
+
+function sessionSheet(day) {
+  const sugg = L.nextSplit(S.gym, day);
+  const picked = new Set(S.gym.sessions[day] || []);
+  let close;
+  const save = (groups, text) => { close(); changeGym((s) => L.gymActions.logSession(s, day, groups), text); };
+  const splits = el("div", { class: "split-grid" }, ...S.gym.splits.map((sp, i) =>
+    el("button", { class: i === sugg ? "primary" : "", onclick: () => save(sp.groups, `Logged: ${sp.name}.`) },
+      sp.name, i === sugg ? el("small", {}, "next up") : null)));
+  const chips = el("div", { class: "pills groups" }, ...L.GROUPS.map((g) => {
+    const b = el("button", { class: `chip ${picked.has(g) ? "on" : ""}`, onclick: () => {
+      picked.has(g) ? picked.delete(g) : picked.add(g); b.classList.toggle("on", picked.has(g)); } }, cap1(g));
+    return b;
+  }));
+  close = sheet("What did you train?", `${dayName(day)} · tap your session, or pick groups for a mixed day`,
+    splits, el("h2", { class: "small" }, "Or pick muscle groups"), chips,
+    el("div", { class: "row end" },
+      el("button", { class: "ghost", onclick: () => close() }, "Cancel"),
+      el("button", { class: "primary", onclick: () => {
+        if (!picked.size) return toast("Pick at least one muscle group.");
+        const gs = L.GROUPS.filter((g) => picked.has(g));
+        save(gs, `Logged: ${sessionLabel(gs)}.`);
+      } }, "Save groups")));
+}
+
+function weighSheet() {
+  const keys = Object.keys(S.gym.weights).sort(), last = keys.length ? S.gym.weights[keys[keys.length - 1]] : null;
+  const input = el("input", { type: "text", inputmode: "decimal", placeholder: last ? last.toFixed(1) : "80.0", class: "kg" });
+  let close;
+  const save = () => {
+    const m = /^\s*(\d{2,3})(?:[.,](\d))?\s*$/.exec(input.value);
+    if (!m) return toast("Type your weight like 82.4.");
+    const kg = Number(`${m[1]}.${m[2] || 0}`);
+    close();
+    changeGym((s) => L.gymActions.logWeight(s, today(), kg), `Weight saved: ${kg.toFixed(1)} kg.`);
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+  close = sheet("Weigh in", last ? `Last time: ${last.toFixed(1)} kg, ${dayName(keys[keys.length - 1]).toLowerCase()}` : "Same time of day each time gives fair numbers.",
+    el("div", { class: "add" }, input, el("span", { class: "unit" }, "kg")),
+    el("div", { class: "row end" }, el("button", { class: "ghost", onclick: () => close() }, "Cancel"),
+      el("button", { class: "primary", onclick: save }, "Save")));
+  setTimeout(() => input.focus(), 50);
+}
 
 // ---------------------------------------------------------------- views
 function header(title, sub) {
@@ -187,10 +259,11 @@ function timeline(t0) {
   if (g.status === G.PLANNED || g.status === G.DONE) {
     const n = L.weekCount(S.gym, L.mondayOf(t0));
     const done = g.status === G.DONE;
-    ev.push({ at: S.gym.time, title: done ? "Gym ✓" : "Gym", sub: `${n} of ${S.gym.goal} this week`, kind: "gym", done,
+    const what = gymLabels(1)[t0];
+    ev.push({ at: S.gym.time, title: (done ? "Gym ✓" : "Gym") + (what ? ` · ${what}` : ""), sub: `${n} of ${S.gym.goal} this week`, kind: "gym", done,
       action: done
         ? el("button", { class: "ghost", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0, false), "Visit removed.") }, "Undo")
-        : el("button", { class: "primary", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0), "Nice! Gym visit logged.") }, "Done") });
+        : el("button", { class: "primary", onclick: () => sessionSheet(t0) }, "Done") });
   }
   if (info.dinner || away) {
     ev.push({ at: DINNER_AT, title: info.dinner ? `Dinner: ${info.dinner}` : "Dinner", sub: away ? "Eating alone tonight" : "", kind: "dinner" });
@@ -208,6 +281,9 @@ function timeline(t0) {
   else status = ["❔", "Partner's schedule isn't out yet", "unknown"];
   box.append(el("div", { class: `tl-status ${status[2]}` }, el("span", {}, status[0]), status[1]));
   for (const t of allDay) box.append(el("div", { class: "tl-allday" }, "All day · " + t));
+  if (L.weighStatus(S.gym, t0).due) box.append(el("div", { class: "tl-weigh" }, el("span", {}, "⚖️"),
+    el("div", { class: "grow" }, el("div", { class: "title" }, "Weigh-in day"), el("div", { class: "sub" }, `Every ${S.gym.weigh_every} days`)),
+    el("button", { class: "primary", onclick: weighSheet }, "Log")));
 
   if (!ev.length) {
     box.append(el("p", { class: "empty" }, "Nothing planned today."));
@@ -248,6 +324,7 @@ function thisWeek(t0) {
   const byDay = {};
   for (const t of S.tasks) for (const x of L.occurrences(t, L.addDays(t0, 1), end)) (byDay[x] = byDay[x] || []).push(t.name);
   const box = el("section", { class: "card" }, el("h2", {}, "This week"));
+  const labels = gymLabels(8);
   for (let i = 1; i <= 7; i++) {
     const x = L.addDays(t0, i);
     const gd = gymWeek(L.mondayOf(x))[L.weekday(x)];
@@ -255,7 +332,7 @@ function thisWeek(t0) {
     const bits = [];
     for (const [a, b, eve] of info.partner || []) bits.push(el("span", { class: "partner" }, `Partner ${shiftKind(a, b).replace(" shift", "")} ${a}–${b}${eve ? " 🌙" : ""}`));
     if (!(info.partner || []).length && info.partner_known) bits.push(el("span", { class: "home" }, "Partner off"));
-    if (gd.status === G.PLANNED || gd.status === G.DONE) bits.push(el("span", { class: "gym" }, `Gym ${S.gym.time}`));
+    if (gd.status === G.PLANNED || gd.status === G.DONE) bits.push(el("span", { class: "gym" }, `Gym ${labels[x] || S.gym.time}`));
     for (const e of info.events || []) bits.push(el("span", { class: "event" }, e));
     if (info.dinner) bits.push(el("span", { class: "dinner" }, info.dinner));
     const chores = byDay[x] || [];
@@ -281,6 +358,26 @@ function viewGym() {
   const n = L.weekCount(S.gym, mon);
   const st = L.streak(S.gym, t0);
   const out = [header("Gym", `${n} of ${S.gym.goal} this week${st ? ` · ${st} week${st === 1 ? "" : "s"} in a row` : ""}`)];
+  const labels = gymLabels(14);
+
+  // next session + muscle groups
+  const doneToday = S.gym.sessions[t0];
+  const upcoming = Object.keys(labels).filter((x) => x >= t0).sort();
+  const nextDay = doneToday ? t0 : upcoming.find((x) => !S.gym.sessions[x]);
+  const nextName = doneToday ? sessionLabel(doneToday) : nextDay ? labels[nextDay] : (S.gym.splits[L.nextSplit(S.gym, t0)] || {}).name;
+  const groupsOf = doneToday || ((S.gym.splits.find((sp) => sp.name === nextName) || {}).groups || []);
+  const since = L.groupDays(S.gym, t0);
+  out.push(el("section", { class: "card next" },
+    el("div", { class: "sub caps" }, doneToday ? "Trained today" : "Next session"),
+    el("div", { class: "big" }, (nextName || "—") + (doneToday ? " ✓" : "")),
+    el("div", { class: "sub" }, doneToday ? "Nice work." : nextDay ? `${dayName(nextDay)} at ${S.gym.time}` : "Next time you go"),
+    el("div", { class: "pills" }, ...groupsOf.map((g) => pill("gym", cap1(g)))),
+    el("div", { class: "groups-grid" }, ...L.GROUPS.map((g) => {
+      const d = since[g], cls = d === null ? "never" : d <= 4 ? "fresh" : d <= 8 ? "soon" : "due";
+      return el("div", { class: `grp ${cls}` }, el("b", {}, cap1(g)),
+        el("span", {}, d === null ? "not yet" : d === 0 ? "today" : d === 1 ? "yesterday" : `${d} days`));
+    })),
+    !doneToday ? el("button", { class: "primary wide", onclick: () => sessionSheet(t0) }, "Log today's session") : null));
 
   for (const [offset, title] of [[0, "This week"], [7, "Next week"]]) {
     const plan = gymWeek(L.addDays(mon, offset));
@@ -289,25 +386,60 @@ function viewGym() {
       const [label, cls] = STATUS[e.status];
       const x = e.date;
       let btn;
-      if (e.status === G.DONE) btn = ["Undo", "ghost", (s) => L.gymActions.markDone(s, x, false), "Visit removed."];
+      if (e.status === G.DONE) btn = ["Undo", "ghost", () => changeGym((s) => L.gymActions.markDone(s, x, false), "Visit removed.")];
       else if (x <= t0 && [G.PLANNED, G.MISSED, G.REST, G.BUSY].includes(e.status))
-        btn = e.status === G.PLANNED ? ["Done", "primary", (s) => L.gymActions.markDone(s, x), "Gym visit logged."]
-          : ["I went", "ghost", (s) => L.gymActions.markDone(s, x), "Gym visit logged."];
-      else if (e.status === G.PLANNED) btn = ["Not this day", "ghost", (s) => L.gymActions.skip(s, x), "Moved to another day."];
-      else if (e.status === G.SKIPPED || S.gym.picked.includes(x)) btn = ["Undo", "ghost", (s) => L.gymActions.reset(s, x), "Back to the automatic plan."];
-      else btn = ["Go this day", "ghost", (s) => L.gymActions.pick(s, x), "Gym planned."];
+        btn = [e.status === G.PLANNED ? "Done" : "I went", e.status === G.PLANNED ? "primary" : "ghost", () => sessionSheet(x)];
+      else if (e.status === G.PLANNED) btn = ["Not this day", "ghost", () => changeGym((s) => L.gymActions.skip(s, x), "Moved to another day.")];
+      else if (e.status === G.SKIPPED || S.gym.picked.includes(x)) btn = ["Undo", "ghost", () => changeGym((s) => L.gymActions.reset(s, x), "Back to the automatic plan.")];
+      else btn = ["Go this day", "ghost", () => changeGym((s) => L.gymActions.pick(s, x), "Gym planned.")];
+      const what = (e.status === G.PLANNED || e.status === G.DONE) ? labels[x] : null;
       box.append(el("div", { class: `item ${x === t0 ? "is-today" : ""}` },
         el("div", { class: "when" }, dayName(x)),
         el("div", { class: "grow" },
           el("div", { class: `title ${cls}` }, label || `Gym ${S.gym.time}`),
-          e.why ? el("div", { class: "sub" }, e.why) : null),
-        el("button", { class: btn[1], onclick: () => changeGym(btn[2], btn[3]) }, btn[0])));
+          what || e.why ? el("div", { class: "sub" }, what || e.why) : null),
+        el("button", { class: btn[1], onclick: btn[2] }, btn[0])));
     }
     out.push(box);
   }
-  out.push(el("p", { class: "note" }, (S.busyNote ? S.busyNote + ". " : "") +
-    "Goal, time and preferred days are set in the PC app."));
+
+  // body weight
+  const wk = Object.keys(S.gym.weights).sort(), ws = L.weighStatus(S.gym, t0);
+  const body = el("section", { class: "card" }, el("h2", {}, "Body weight",
+    el("span", { class: `count ${ws.due ? "late" : ""}` }, ws.due ? "due" : `next ${dayName(ws.next).toLowerCase()}`)));
+  if (!wk.length) body.append(el("p", { class: "empty" }, `No weigh-ins yet. Log one and you get a reminder every ${S.gym.weigh_every} days.`));
+  else {
+    const v = (k) => S.gym.weights[k], lastK = wk[wk.length - 1];
+    body.append(el("div", { class: "row" },
+      el("div", { class: "grow" }, el("div", { class: "big" }, `${v(lastK).toFixed(1)} kg`),
+        el("div", { class: "sub" }, wk.length > 1 ? `${(v(lastK) - v(wk[wk.length - 2])).toFixed(1).replace(/^(?!-)/, "+")} kg since last · ${(v(lastK) - v(wk[0])).toFixed(1).replace(/^(?!-)/, "+")} kg in total` : dayName(lastK))),
+      spark(wk.slice(-20).map(v))));
+  }
+  body.append(el("button", { class: ws.due ? "primary wide" : "ghost wide", onclick: weighSheet }, "Weigh in"));
+  out.push(body);
+
+  // stats
+  const weeks = [...Array(8)].map((_, i) => L.weekCount(S.gym, L.addDays(mon, -7 * (7 - i))));
+  const year = S.gym.done.filter((x) => x.slice(0, 4) === t0.slice(0, 4)).length;
+  out.push(el("section", { class: "card" }, el("h2", {}, "Stats"),
+    el("div", { class: "stats" },
+      el("div", {}, el("b", {}, String(year)), el("span", {}, `visits in ${t0.slice(0, 4)}`)),
+      el("div", {}, el("b", {}, (weeks.slice(-4).reduce((a, b) => a + b, 0) / 4).toFixed(1)), el("span", {}, "per week, last 4")),
+      el("div", {}, el("b", {}, String(st)), el("span", {}, "weeks at goal"))),
+    el("div", { class: "bars" }, ...weeks.map((c, i) => el("div", { class: `bar ${c >= S.gym.goal ? "ok" : ""} ${i === 7 ? "now" : ""}`,
+      style: `height:${Math.max(4, Math.round(c / Math.max(S.gym.goal, ...weeks, 1) * 100))}%` }, el("span", {}, c || ""))))));
+  out.push(el("p", { class: "note" }, (S.busyNote ? S.busyNote + ". " : "") + "Goal, time and preferred days are set in the PC app."));
   return out;
+}
+
+function spark(vals) {
+  if (vals.length < 2) return null;
+  const W = 120, H = 44, lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 1);
+  const pts = vals.map((v, i) => `${(i * (W - 8) / (vals.length - 1) + 4).toFixed(1)},${(4 + (hi - v) / span * (H - 8)).toFixed(1)}`).join(" ");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("class", "spark");
+  svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+  return svg;
 }
 
 function viewAdd() {
@@ -386,7 +518,9 @@ function demoStore() {
       { id: "a3", name: "Call dentist", rule: { type: "once" }, next_due: t0, active: true, history: [] },
       { id: "a4", name: "Water plants", rule: { type: "every", n: 4, unit: "days", anchor: t0 }, next_due: L.addDays(t0, 2), minutes: 10, active: true, history: [] },
     ] },
-    "gym.json": { ...GYM_DEFAULTS, done: [L.addDays(t0, -1)] },
+    "gym.json": { ...GYM_DEFAULTS, done: [L.addDays(t0, -1), L.addDays(t0, -3), L.addDays(t0, -6), L.addDays(t0, -8)],
+      sessions: { [L.addDays(t0, -8)]: ["chest", "triceps"], [L.addDays(t0, -6)]: ["legs", "traps", "core"], [L.addDays(t0, -3)]: ["back", "biceps"], [L.addDays(t0, -1)]: ["chest", "legs"] },
+      weights: { [L.addDays(t0, -42)]: 84.1, [L.addDays(t0, -28)]: 83.6, [L.addDays(t0, -14)]: 83.0 } },
     "phone.json": { generated: new Date().toISOString(), busy: { [L.addDays(t0, 3)]: ["hard", "18:00 Dinner"] },
       weather: { temp: 7, text: "Cloudy", icon: "w_cloud", place: "Malmö" },
       days: Object.fromEntries([0, 1, 2, 3, 4, 5, 6].map((i) => [L.addDays(t0, i), {

@@ -234,13 +234,102 @@ const Logic = (() => {
     return n;
   }
 
+  // ---------------------------------------------------------------- training (port of chores_gym training)
+  const GROUPS = ["chest", "triceps", "back", "biceps", "shoulders", "forearms", "legs", "traps", "core"];
+  const ROUTINE = [{ name: "Chest & triceps", groups: ["chest", "triceps"] },
+    { name: "Legs, traps & core", groups: ["legs", "traps", "core"] },
+    { name: "Back & biceps", groups: ["back", "biceps"] },
+    { name: "Shoulders & forearms", groups: ["shoulders", "forearms"] }];
+  const RECOVER = 2;
+
+  function lastTrained(state, before) {
+    const out = {};
+    for (const iso of Object.keys(state.sessions || {}).sort()) if (iso < before) for (const g of state.sessions[iso]) out[g] = iso;
+    return out;
+  }
+  function covers(splits, groups, anchor) {
+    const n = splits.length, set = new Set(groups);
+    let best = -1, bestKey = null;
+    splits.forEach((sp, i) => {
+      const hit = sp.groups.filter((g) => set.has(g)).length;
+      if (!sp.groups.length || hit < sp.groups.length) return;
+      const key = Math.floor(hit * 100 / sp.groups.length) * 10 + (n - 1 - mod(i - anchor - 1, n));
+      if (bestKey === null || key > bestKey) { best = i; bestKey = key; }
+    });
+    return best;
+  }
+  function mod(a, n) { return ((a % n) + n) % n; }
+  function anchorOf(state, before) {
+    let idx = -1;
+    for (const iso of Object.keys(state.sessions || {}).sort()) {
+      if (iso >= before) break;
+      const hit = covers(state.splits, state.sessions[iso], idx);
+      if (hit >= 0) idx = hit;
+    }
+    return idx;
+  }
+  function bestSplit(splits, last, anchor, day) {
+    const n = splits.length;
+    let fallback = -1, fbKey = null;
+    for (let k = 0; k < n; k++) {
+      const i = mod(anchor + 1 + k, n), groups = splits[i].groups;
+      if (!groups.length) continue;
+      const resting = groups.filter((g) => last[g] && daysBetween(last[g], day) <= RECOVER).length;
+      if (resting === 0) return i;
+      const key = -resting * 10 - k;
+      if (fbKey === null || key > fbKey) { fallback = i; fbKey = key; }
+    }
+    return fallback;
+  }
+  function nextSplit(state, day) {
+    if (!state.splits || !state.splits.length) return -1;
+    return bestSplit(state.splits, lastTrained(state, day), anchorOf(state, day), day);
+  }
+  function planSplits(state, days) {
+    days = days.slice().sort();
+    if (!days.length || !state.splits || !state.splits.length) return {};
+    const last = lastTrained(state, days[0]), out = {};
+    let anchor = anchorOf(state, days[0]);
+    for (const x of days) {
+      const i = bestSplit(state.splits, last, anchor, x);
+      out[x] = i;
+      if (i < 0) continue;
+      for (const g of state.splits[i].groups) last[g] = x;
+      anchor = i;
+    }
+    return out;
+  }
+  function groupDays(state, today) {
+    const last = lastTrained(state, addDays(today, 1));
+    return Object.fromEntries(GROUPS.map((g) => [g, last[g] ? daysBetween(last[g], today) : null]));
+  }
+  function weighStatus(state, today) {
+    const keys = Object.keys(state.weights || {}).sort();
+    if (!keys.length) return { due: true, last: null, days: null, next: today };
+    const last = keys[keys.length - 1], next = addDays(last, Number(state.weigh_every || 14));
+    return { due: today >= next, last, days: daysBetween(last, today), next };
+  }
+
   function toggle(list, iso, on) {
     const i = list.indexOf(iso);
     if (on && i < 0) { list.push(iso); list.sort(); }
     if (!on && i >= 0) list.splice(i, 1);
   }
   const gymActions = {
-    markDone(s, iso, on = true) { toggle(s.done, iso, on); if (on) toggle(s.skipped, iso, false); },
+    markDone(s, iso, on = true) {
+      toggle(s.done, iso, on);
+      if (on) toggle(s.skipped, iso, false); else if (s.sessions) delete s.sessions[iso];
+    },
+    logSession(s, iso, groups) {
+      const set = new Set(groups || []), gs = GROUPS.filter((g) => set.has(g));
+      s.sessions = s.sessions || {};
+      if (gs.length) { s.sessions[iso] = gs; gymActions.markDone(s, iso, true); } else delete s.sessions[iso];
+    },
+    logWeight(s, iso, kg) {
+      s.weights = s.weights || {};
+      if (kg === null || kg === undefined || kg === "") delete s.weights[iso];
+      else s.weights[iso] = Math.round(Number(kg) * 10) / 10;
+    },
     pick(s, iso) { toggle(s.picked, iso, true); toggle(s.skipped, iso, false); },
     skip(s, iso) { toggle(s.skipped, iso, true); toggle(s.picked, iso, false); },
     reset(s, iso) { toggle(s.picked, iso, false); toggle(s.skipped, iso, false); },
@@ -249,6 +338,7 @@ const Logic = (() => {
   return {
     addDays, addMonths, step, weekday, daysBetween, localToday, nextOccurrence, describeRule, complete, snoozeDays,
     occurrences, GYM, mondayOf, planWeek, weekCount, streak, gymActions, NAMES, LONG, MONTHS,
+    GROUPS, ROUTINE, nextSplit, planSplits, groupDays, weighStatus,
   };
 })();
 
