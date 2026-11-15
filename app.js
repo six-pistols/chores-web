@@ -322,8 +322,11 @@ function timeline(t0) {
         ? el("button", { class: "ghost sm", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0, false), "Visit removed.") }, "Undo")
         : el("button", { class: "primary sm", onclick: () => sessionSheet(t0) }, "Done") });
   }
+  if (info.lunch) ev.push({ at: "12:00", title: `Lunch box: ${info.lunch}`, sub: "leftovers, pack it in the morning", kind: "dinner" });
   if (info.dinner || away) {
-    ev.push({ at: DINNER_AT, title: info.dinner ? `Dinner: ${info.dinner}` : "Dinner", sub: away ? "Eating alone tonight" : "", kind: "dinner" });
+    const left = (info.dinner || "").startsWith("Leftovers: ");
+    ev.push({ at: DINNER_AT, title: info.dinner ? (left ? info.dinner : `Dinner: ${info.dinner}`) : "Dinner",
+      sub: [away ? "Eating alone tonight" : "", left ? "from the batch you cooked" : ""].filter(Boolean).join(" · "), kind: "dinner" });
   }
   const allDay = [];
   for (const line of info.events || []) {
@@ -392,6 +395,7 @@ function thisWeek(t0) {
     if (gd.status === G.PLANNED || gd.status === G.DONE) bits.push(el("span", { class: "gym" }, `Gym ${labels[x] || S.gym.time}`));
     for (const e of info.events || []) bits.push(el("span", { class: "event" }, e));
     if (info.dinner) bits.push(el("span", { class: "dinner" }, info.dinner));
+    if (info.lunch) bits.push(el("span", { class: "dinner" }, `Lunch box: ${info.lunch}`));
     const chores = byDay[x] || [];
     const wx = info.weather;
     box.append(el("div", { class: "wk", "data-key": `wk:${x}` },
