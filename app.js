@@ -73,7 +73,7 @@ async function changeTask(id, fn, text) {
   await guard(async () => {
     const { data } = await Store.update("tasks.json", { version: 1, tasks: [] }, (d) => {
       const t = d.tasks.find((x) => x.id === id);
-      if (!t) throw new Error("That chore was changed on another device. Pull down to refresh.");
+      if (!t) throw new Error("That chore was changed on another device. Tap ↻ to refresh.");
       before = JSON.parse(JSON.stringify(t));
       fn(t);
     });
@@ -121,29 +121,23 @@ function taskSub(t) {
   return bits.join(" · ");
 }
 
+const WX = { w_sun: "☀️", w_partly: "⛅", w_cloud: "☁️", w_rain: "🌧️", w_snow: "🌨️", w_thunder: "⛈️", w_fog: "🌫️", w_wind: "💨" };
+const DINNER_AT = "19:00";
+const nowHM = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`; };
+const splitTime = (line) => { const m = /^(\d{1,2}[:.]\d{2})\s+(.*)$/.exec(line); return m ? [m[1].replace(".", ":").padStart(5, "0"), m[2]] : [null, line]; };
+
 function viewToday() {
   const t0 = today();
   const due = S.tasks.filter((t) => t.active && t.next_due <= t0).sort((a, b) => a.next_due.localeCompare(b.next_due));
   const late = due.filter((t) => t.next_due < t0).length;
-  const sub = due.length ? `${due.length} to do${late ? ` · ${late} late` : ""}` : "All done for today";
   const [, m, d] = t0.split("-").map(Number);
-  const out = [header(`${L.LONG[L.weekday(t0)]} ${d} ${L.MONTHS[m - 1]}`, sub)];
-  out.push(todayCard(t0));
+  const w = S.weather, wd = (S.days[t0] || {}).weather;
+  const wxText = w ? `${WX[w.icon] || ""} ${w.temp}° ${w.text}` : wd ? `${WX[wd.icon] || ""} ${wd.max}° / ${wd.min}°` : "";
+  const out = [header(`${L.LONG[L.weekday(t0)]} ${d} ${L.MONTHS[m - 1]}`, wxText)];
+  out.push(timeline(t0));
 
-  const g = gymWeek(L.mondayOf(t0))[L.weekday(t0)];
-  if (g.status === G.PLANNED || g.status === G.DONE) {
-    const n = L.weekCount(S.gym, L.mondayOf(t0));
-    out.push(el("section", { class: "card gym-today" },
-      el("div", { class: "row" },
-        el("div", { class: "grow" },
-          el("div", { class: "title" }, g.status === G.DONE ? "Gym done ✓" : `Gym at ${S.gym.time}`),
-          el("div", { class: "sub" }, `${n} of ${S.gym.goal} this week`)),
-        g.status === G.DONE
-          ? el("button", { class: "ghost", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0, false), "Visit removed.") }, "Undo")
-          : el("button", { class: "primary", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0), "Nice! Gym visit logged.") }, "Done"))));
-  }
-
-  const list = el("section", { class: "card" }, el("h2", {}, "To do"));
+  const list = el("section", { class: "card" },
+    el("h2", {}, "To do", due.length ? el("span", { class: `count ${late ? "late" : ""}` }, String(due.length)) : null));
   if (!due.length) list.append(el("p", { class: "empty" }, "Nothing waiting. Enjoy your day."));
   for (const t of due) {
     const recurring = t.rule.type !== "once";
@@ -155,72 +149,99 @@ function viewToday() {
         el("button", { class: "primary", onclick: () => changeTask(t.id, (x) => L.complete(x, false, today()), `Done: ${t.name}`) }, "Done"))));
   }
   out.push(list);
-
-  // the week ahead
-  const end = L.addDays(t0, 7);
-  const byDay = {};
-  for (const t of S.tasks) for (const x of L.occurrences(t, L.addDays(t0, 1), end)) (byDay[x] = byDay[x] || []).push(t.name);
-  const ahead = el("section", { class: "card" }, el("h2", {}, "Coming up"));
-  let any = false;
-  for (let i = 1; i <= 7; i++) {
-    const x = L.addDays(t0, i);
-    const gd = gymWeek(L.mondayOf(x))[L.weekday(x)];
-    const info = S.days[x] || {};
-    const pills = [
-      ...(info.partner || []).map(([a, b, eve]) => pill("partner", `Partner works ${a}–${b}${eve ? ", not home for dinner" : ""}`)),
-      ...(info.events || []).map((e) => pill("event", e)),
-      gd.status === G.PLANNED ? pill("gym", `Gym ${S.gym.time}`) : null,
-      info.dinner ? pill("dinner", info.dinner) : null,
-      ...(byDay[x] || []).map((n) => pill("chore", n)),
-    ].filter(Boolean);
-    if (!pills.length) continue;
-    any = true;
-    const w = info.weather;
-    ahead.append(el("div", { class: "day" },
-      el("div", { class: "when" }, dayName(x), w ? el("div", { class: "wx" }, `${WX[w.icon] || ""} ${w.max}°`) : null),
-      el("div", { class: "grow pills" }, ...pills)));
-  }
-  if (!any) ahead.append(el("p", { class: "empty" }, "Nothing in the next 7 days."));
-  out.push(ahead);
+  out.push(thisWeek(t0));
   return out;
 }
 
-const WX = { w_sun: "☀️", w_partly: "⛅", w_cloud: "☁️", w_rain: "🌧️", w_snow: "🌨️", w_thunder: "⛈️", w_fog: "🌫️", w_wind: "💨" };
-const pill = (kind, text) => el("span", { class: `pill ${kind}` }, text);
-
-// Today at a glance: weather, whether your partner works (and is away at dinner), your calendar, dinner.
-function todayCard(t0) {
+// Today as a timeline: partner's shift (leaves / home), gym, dinner, your calendar, in time order.
+function timeline(t0) {
   const info = S.days[t0];
-  const box = el("section", { class: "card glance" });
-  const w = S.weather, wd = info && info.weather;
-  if (w || wd) {
-    box.append(el("div", { class: "wxrow" },
-      el("span", { class: "wxicon" }, WX[(w || wd).icon] || "🌡️"),
-      el("div", { class: "grow" },
-        el("div", { class: "title" }, w ? `${w.temp}° ${w.text}` : `${wd.max}° / ${wd.min}°`),
-        el("div", { class: "sub" }, [w && w.place, wd && `high ${wd.max}°, low ${wd.min}°`].filter(Boolean).join(" · ")))));
-  }
+  const box = el("section", { class: "card tl" });
   if (!info) {
     box.append(el("p", { class: "empty" }, "Open the PC app once today to see shifts and plans here."));
     return box;
   }
+  const ev = [];                                   // {at, title, sub, kind, action, done}
   const shifts = info.partner || [];
-  const evening = shifts.some((x) => x[2]);
-  let head, sub, mood;
-  if (shifts.length) {
-    head = evening ? "Partner works this evening" : "Partner works, home for dinner";
-    sub = "Working " + shifts.map(([a, b]) => `${a} to ${b}`).join(" and ");
-    mood = evening ? "away" : "work";
-  } else if (info.partner_known) {
-    head = "Partner is off today"; sub = "Home all day"; mood = "home";
-  } else {
-    head = "Partner's schedule not known yet"; sub = "No shifts published for today"; mood = "unknown";
+  const away = shifts.some((x) => x[2]);
+  for (const [a, b] of shifts) {
+    ev.push({ at: a, title: "Partner at work", sub: `until ${b}`, kind: "partner" });
+    ev.push({ at: b, title: "Partner home", kind: "partner end" });
   }
-  box.append(el("div", { class: `who ${mood}` },
-    el("span", { class: "badge" }, mood === "away" ? "🌙" : mood === "work" ? "💼" : mood === "home" ? "🏠" : "❔"),
-    el("div", { class: "grow" }, el("div", { class: "title" }, head), el("div", { class: "sub" }, sub))));
-  const plans = [...(info.events || []).map((e) => pill("event", e)), info.dinner ? pill("dinner", `Dinner: ${info.dinner}`) : null].filter(Boolean);
-  if (plans.length) box.append(el("div", { class: "pills plans" }, ...plans));
+  const g = gymWeek(L.mondayOf(t0))[L.weekday(t0)];
+  if (g.status === G.PLANNED || g.status === G.DONE) {
+    const n = L.weekCount(S.gym, L.mondayOf(t0));
+    const done = g.status === G.DONE;
+    ev.push({ at: S.gym.time, title: done ? "Gym ✓" : "Gym", sub: `${n} of ${S.gym.goal} this week`, kind: "gym", done,
+      action: done
+        ? el("button", { class: "ghost", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0, false), "Visit removed.") }, "Undo")
+        : el("button", { class: "primary", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0), "Nice! Gym visit logged.") }, "Done") });
+  }
+  if (info.dinner || away) {
+    ev.push({ at: DINNER_AT, title: info.dinner ? `Dinner: ${info.dinner}` : "Dinner", sub: away ? "Eating alone tonight" : "", kind: "dinner" });
+  }
+  const allDay = [];
+  for (const line of info.events || []) {
+    const [at, text] = splitTime(line);
+    if (at) ev.push({ at, title: text, kind: "event" }); else allDay.push(text);
+  }
+  ev.sort((x, y) => x.at.localeCompare(y.at));
+
+  let status;
+  if (shifts.length) status = away ? ["🌙", "Partner works this evening", "away"] : ["💼", "Partner works, home for dinner", "work"];
+  else if (info.partner_known) status = ["🏠", "Partner is off today", "home"];
+  else status = ["❔", "Partner's schedule isn't out yet", "unknown"];
+  box.append(el("div", { class: `tl-status ${status[2]}` }, el("span", {}, status[0]), status[1]));
+  for (const t of allDay) box.append(el("div", { class: "tl-allday" }, "All day · " + t));
+
+  if (!ev.length) {
+    box.append(el("p", { class: "empty" }, "Nothing planned today."));
+    return box;
+  }
+  const now = nowHM();
+  let nowShown = false;
+  const rail = el("div", { class: "tl-rail" });
+  for (const e of ev) {
+    if (!nowShown && e.at > now) {
+      rail.append(el("div", { class: "tl-now" }, el("span", {}, now)));
+      nowShown = true;
+    }
+    rail.append(el("div", { class: `tl-item ${e.kind} ${e.at <= now ? "past" : ""} ${e.done ? "done" : ""}` },
+      el("div", { class: "tl-time" }, e.at),
+      el("div", { class: "tl-dot" }),
+      el("div", { class: "grow" }, el("div", { class: "title" }, e.title), e.sub ? el("div", { class: "sub" }, e.sub) : null),
+      e.action || null));
+  }
+  if (!nowShown) rail.append(el("div", { class: "tl-now" }, el("span", {}, now)));
+  box.append(rail);
+  return box;
+}
+
+// The next seven days, one compact row each.
+function thisWeek(t0) {
+  const end = L.addDays(t0, 7);
+  const byDay = {};
+  for (const t of S.tasks) for (const x of L.occurrences(t, L.addDays(t0, 1), end)) (byDay[x] = byDay[x] || []).push(t.name);
+  const box = el("section", { class: "card" }, el("h2", {}, "This week"));
+  for (let i = 1; i <= 7; i++) {
+    const x = L.addDays(t0, i);
+    const gd = gymWeek(L.mondayOf(x))[L.weekday(x)];
+    const info = S.days[x] || {};
+    const bits = [];
+    for (const [a, b, eve] of info.partner || []) bits.push(el("span", { class: "partner" }, eve ? `Partner till ${b} 🌙` : `Partner ${a}–${b}`));
+    if (!(info.partner || []).length && info.partner_known) bits.push(el("span", { class: "home" }, "Partner off"));
+    if (gd.status === G.PLANNED || gd.status === G.DONE) bits.push(el("span", { class: "gym" }, `Gym ${S.gym.time}`));
+    for (const e of info.events || []) bits.push(el("span", { class: "event" }, e));
+    if (info.dinner) bits.push(el("span", { class: "dinner" }, info.dinner));
+    const chores = byDay[x] || [];
+    const wx = info.weather;
+    box.append(el("div", { class: "wk" },
+      el("div", { class: "wk-day" }, el("b", {}, L.NAMES[L.weekday(x)]),
+        el("span", {}, `${Number(x.slice(8))}`), wx ? el("span", { class: "wk-wx" }, `${WX[wx.icon] || ""}${wx.max}°`) : null),
+      el("div", { class: "grow" },
+        bits.length ? el("div", { class: "wk-line" }, ...bits.flatMap((bEl, k) => (k ? [el("i", {}, " · "), bEl] : [bEl]))) : el("div", { class: "wk-line muted" }, "Nothing planned"),
+        chores.length ? el("div", { class: "wk-chores" }, chores.join(", ")) : null)));
+  }
   return box;
 }
 
@@ -265,7 +286,7 @@ function viewGym() {
 }
 
 function viewAdd() {
-  const input = el("input", { type: "text", placeholder: "e.g. clean fridge 3 weeks after done", enterkeyhint: "send",
+  const input = el("input", { type: "text", placeholder: "e.g. vacuum every saturday", enterkeyhint: "send",
     autocapitalize: "sentences" });
   const send = () => guard(async () => {
     const text = input.value.trim();
@@ -313,10 +334,21 @@ async function start() {
     if (!Auth.signedIn()) return signInScreen();
   }
   $("nav").hidden = false;
-  await guard(load);
+  await firstLoad();
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && (!S.loaded || Date.now() - S.loaded > 30000)) guard(load);
   });
+}
+
+// First load shows a placeholder, and a retry card if OneDrive can't be reached.
+async function firstLoad() {
+  $("main").replaceChildren(el("section", { class: "card" }, el("p", { class: "empty" }, "Loading your chores…")));
+  try { await load(); } catch (e) {
+    console.error(e);
+    $("main").replaceChildren(el("section", { class: "card" },
+      el("h2", {}, "Couldn't reach OneDrive"), el("p", { class: "empty" }, e.message || String(e)),
+      el("button", { class: "primary", onclick: firstLoad }, "Try again")));
+  }
 }
 
 // ---------------------------------------------------------------- demo data (localhost?demo only)

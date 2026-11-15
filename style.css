@@ -120,3 +120,60 @@ nav button.on .ic { transform: translateY(-1px) scale(1.06); }
 }
 .day .when .wx { font-weight: 500; margin-top: 2px; }
 .day .pills { padding-top: 1px; }
+
+/* review fixes */
+:root { color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --lo: #12151b; --mut: #98a1b4; } }
+:root { --mut: #6b7488; }
+@media (prefers-color-scheme: dark) { :root { --mut: #98a1b4; } }
+.pills { align-items: flex-start; align-content: flex-start; }
+button { min-height: 44px; touch-action: manipulation; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+button.chip, nav button { min-height: 0; }
+button.icon { flex: none; }
+button.ghost { color: var(--text); }
+h1 { font-size: clamp(22px, 7vw, 30px); }
+header { align-items: flex-start; }
+body::after { content: ""; position: fixed; left: 0; right: 0; bottom: 0; z-index: 1; pointer-events: none;
+  height: calc(env(safe-area-inset-bottom) + 96px); background: linear-gradient(transparent, var(--bg) 55%); }
+nav { z-index: 2; } #toast { z-index: 3; }
+
+/* ---- Today timeline */
+:root { --c-partner: #0a7a96; --c-gym: #248a3d; --c-dinner: #b25000; --c-event: #4543c4; --c-away: #c2410c; }
+@media (prefers-color-scheme: dark) {
+  :root { --c-partner: #67e8f9; --c-gym: #34d399; --c-dinner: #fbbf24; --c-event: #a5b4fc; --c-away: #fb923c; }
+}
+h2 .count { margin-left: 8px; font-size: 12px; padding: 2px 9px; border-radius: 999px; box-shadow: var(--press-sm); color: var(--accent); }
+h2 .count.late { color: var(--late); }
+.tl-status { display: flex; align-items: center; gap: 10px; font-weight: 650; color: var(--ink); padding: 10px 12px;
+  border-radius: 16px; box-shadow: var(--press-sm); margin-bottom: 12px; }
+.tl-status span { font-size: 20px; }
+.tl-status.away { color: var(--c-away); } .tl-status.home { color: var(--ok); } .tl-status.unknown { color: var(--mut); font-weight: 550; }
+.tl-allday { font-size: 13px; color: var(--c-event); font-weight: 600; margin: -4px 0 10px 4px; }
+.tl-rail { position: relative; }
+.tl-item { position: relative; display: flex; align-items: center; gap: 12px; padding: 9px 0; min-height: 48px; }
+.tl-time { width: 44px; flex: none; text-align: right; font-size: 13px; font-weight: 650; color: var(--mut); font-variant-numeric: tabular-nums; }
+.tl-dot { position: relative; width: 14px; align-self: stretch; flex: none; }
+.tl-dot::before { content: ""; position: absolute; left: 6px; top: -10px; bottom: -10px; width: 2px; background: color-mix(in srgb, var(--lo) 45%, transparent); }
+.tl-item:first-child .tl-dot::before { top: 50%; } .tl-item:last-child .tl-dot::before { bottom: 50%; }
+.tl-dot::after { content: ""; position: absolute; left: 1px; top: calc(50% - 6px); width: 12px; height: 12px; border-radius: 50%;
+  background: var(--bg); box-shadow: 2px 2px 4px var(--lo-a), -2px -2px 4px var(--hi-a), inset 0 0 0 3px var(--dotc, var(--mut)); }
+.tl-item.partner { --dotc: var(--c-partner); } .tl-item.partner .title { color: var(--c-partner); }
+.tl-item.gym { --dotc: var(--c-gym); } .tl-item.dinner { --dotc: var(--c-dinner); } .tl-item.event { --dotc: var(--c-event); }
+.tl-item.done .tl-dot::after { background: var(--c-gym); }
+.tl-item.past { opacity: .5; } .tl-item.past.gym, .tl-item.past.done { opacity: 1; }
+.tl-item .title { font-size: 15px; }
+.tl-now { position: relative; height: 0; margin: 2px 0; border-top: 2px dashed color-mix(in srgb, var(--late) 55%, transparent); }
+.tl-now span { position: absolute; left: 0; top: -9px; font-size: 11px; font-weight: 700; color: var(--late); background: var(--bg); padding: 0 4px; border-radius: 6px; }
+
+/* ---- This week */
+.wk { display: flex; gap: 12px; padding: 10px 0; align-items: flex-start; }
+.wk + .wk { border-top: 1px solid color-mix(in srgb, var(--lo) 30%, transparent); }
+.wk-day { width: 44px; flex: none; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+.wk-day b { font-size: 12px; color: var(--mut); font-weight: 650; text-transform: uppercase; letter-spacing: .3px; }
+.wk-day > span:not(.wk-wx) { font-size: 20px; font-weight: 700; color: var(--ink); }
+.wk-wx { font-size: 11px; color: var(--mut); margin-top: 2px; white-space: nowrap; }
+.wk-line { font-size: 14px; font-weight: 600; color: var(--text); padding-top: 2px; }
+.wk-line i { font-style: normal; color: var(--mut); font-weight: 400; }
+.wk-line .partner { color: var(--c-partner); } .wk-line .home { color: var(--ok); } .wk-line .gym { color: var(--c-gym); }
+.wk-line .event { color: var(--c-event); } .wk-line .dinner { color: var(--c-dinner); }
+.wk-chores { font-size: 13px; color: var(--mut); margin-top: 3px; }
