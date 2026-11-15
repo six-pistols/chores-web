@@ -151,7 +151,9 @@ async function changeGym(fn, text) {
 }
 
 const gymBusy = (iso) => S.busy[iso] || null;
-const gymWeek = (monday) => L.planWeek(S.gym, monday, today(), gymBusy);
+// From 19:00 today is over for planning (same as the PC): an unvisited gym day moves on.
+const planDay = () => (new Date().getHours() >= 19 ? L.addDays(today(), 1) : today());
+const gymWeek = (monday) => L.planWeek(S.gym, monday, planDay(), gymBusy);
 const cap1 = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 const pill = (kind, text) => el("span", { class: `pill ${kind}` }, text);
 function sessionLabel(groups) {
