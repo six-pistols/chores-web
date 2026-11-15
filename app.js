@@ -22,6 +22,31 @@ function el(tag, attrs = {}, ...kids) {
   for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : document.createTextNode(k));
   return e;
 }
+const SVG_NS = "http://www.w3.org/2000/svg";
+const ICONS = {
+  refresh: '<path d="M20 11a8 8 0 1 0-2.3 6.4"/><path d="M20 4v7h-7"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
+  home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v9h12v-9"/>',
+  dinner: '<path d="M6 3v6a3 3 0 0 0 6 0V3M9 3v18"/><path d="M17 21V3c-2 2-3 4.5-3 8.5h3"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.5-1.2 1-1.2 1.8M12 17h.01"/>',
+  person: '<circle cx="12" cy="8" r="4"/><path d="M5 20c.8-3.4 3.6-5 7-5s6.2 1.6 7 5"/>',
+  gym: '<path d="M7.5 12h9M2.5 9.5v5M21.5 9.5v5"/><rect x="4.5" y="6.5" width="3" height="11" rx="1.2"/><rect x="16.5" y="6.5" width="3" height="11" rx="1.2"/>',
+  calendar: '<rect x="3" y="4" width="18" height="17" rx="2.5"/><path d="M3 10h18M8 2v4M16 2v4"/>',
+  scale: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 9.5a5 5 0 0 1 8 0l-2.2 2.5h-3.6z"/>',
+  alert: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.5h.01"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+};
+function icon(name) {
+  const s = document.createElementNS(SVG_NS, "svg");
+  s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("class", "i"); s.setAttribute("aria-hidden", "true");
+  s.innerHTML = ICONS[name];
+  return s;
+}
+const bubble = (name) => el("span", { class: "bubble" }, icon(name));
+const empty = (name, text) => el("div", { class: "empty" }, bubble(name), el("p", {}, text));
+const calm = window.matchMedia("(prefers-reduced-motion: reduce)");
+
 const today = () => L.localToday();
 function dayName(iso) {
   const d = L.daysBetween(today(), iso);
@@ -40,11 +65,18 @@ function toast(text, undo) {
   const t = $("#toast");
   t.replaceChildren(el("span", {}, text));
   if (undo) t.append(el("button", { onclick: () => { hideToast(); undo(); } }, "Undo"));
-  t.hidden = false;
-  clearTimeout(toast.timer);
+  clearTimeout(toast.timer); clearTimeout(toast.gone);
+  t.classList.remove("out");
+  t.hidden = true; void t.offsetWidth; t.hidden = false;      // replay the entrance when a new message replaces an old one
   toast.timer = setTimeout(hideToast, 5000);
 }
-function hideToast() { $("#toast").hidden = true; }
+function hideToast() {
+  const t = $("#toast");
+  if (t.hidden) return;
+  clearTimeout(toast.timer); clearTimeout(toast.gone);
+  t.classList.add("out");
+  toast.gone = setTimeout(() => { t.hidden = true; t.classList.remove("out"); }, calm.matches ? 0 : 200);
+}
 // Saving takes a OneDrive round trip; only dim the page if it is slow, and spin the refresh button meanwhile.
 let busyTimer = null;
 function busy(on) {
@@ -137,10 +169,24 @@ function gymLabels(n = 14) {
 
 // ---------------------------------------------------------------- bottom sheets
 function sheet(title, sub, ...body) {
-  const close = () => wrap.remove();
+  const vv = window.visualViewport;
+  const fit = () => { wrap.style.top = `${vv.offsetTop}px`; wrap.style.height = `${vv.height}px`; };   // stay above the keyboard
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const close = () => {
+    if (wrap.classList.contains("closing")) return;
+    wrap.classList.add("closing");
+    document.documentElement.classList.remove("locked");
+    document.removeEventListener("keydown", onKey);
+    if (vv) { vv.removeEventListener("resize", fit); vv.removeEventListener("scroll", fit); }
+    setTimeout(() => wrap.remove(), calm.matches ? 0 : 220);
+  };
   const wrap = el("div", { class: "sheet-wrap", onclick: (e) => { if (e.target === wrap) close(); } },
-    el("div", { class: "sheet" }, el("div", { class: "grab" }), el("h2", {}, title), sub ? el("p", { class: "sub" }, sub) : null, ...body));
+    el("div", { class: "sheet", role: "dialog", "aria-modal": "true", "aria-label": title },
+      el("div", { class: "grab" }), el("h2", {}, title), sub ? el("p", { class: "sub" }, sub) : null, ...body));
   document.body.append(wrap);
+  document.documentElement.classList.add("locked");
+  document.addEventListener("keydown", onKey);
+  if (vv) { fit(); vv.addEventListener("resize", fit); vv.addEventListener("scroll", fit); }
   return close;
 }
 
@@ -152,13 +198,14 @@ function sessionSheet(day) {
   const splits = el("div", { class: "split-grid" }, ...S.gym.splits.map((sp, i) =>
     el("button", { class: i === sugg ? "primary" : "", onclick: () => save(sp.groups, `Logged: ${sp.name}.`) },
       sp.name, i === sugg ? el("small", {}, "next up") : null)));
-  const chips = el("div", { class: "pills groups" }, ...L.GROUPS.map((g) => {
-    const b = el("button", { class: `chip ${picked.has(g) ? "on" : ""}`, onclick: () => {
-      picked.has(g) ? picked.delete(g) : picked.add(g); b.classList.toggle("on", picked.has(g)); } }, cap1(g));
+  const chips = el("div", { class: "tog-grid" }, ...L.GROUPS.map((g) => {
+    const b = el("button", { class: `tog ${picked.has(g) ? "on" : ""}`, "aria-pressed": String(picked.has(g)), onclick: () => {
+      picked.has(g) ? picked.delete(g) : picked.add(g);
+      b.classList.toggle("on", picked.has(g)); b.setAttribute("aria-pressed", String(picked.has(g))); } }, cap1(g));
     return b;
   }));
   close = sheet("What did you train?", `${dayName(day)} · tap your session, or pick groups for a mixed day`,
-    splits, el("h2", { class: "small" }, "Or pick muscle groups"), chips,
+    splits, el("h3", {}, "Or pick muscle groups"), chips,
     el("div", { class: "row end" },
       el("button", { class: "ghost", onclick: () => close() }, "Cancel"),
       el("button", { class: "primary", onclick: () => {
@@ -170,7 +217,7 @@ function sessionSheet(day) {
 
 function weighSheet() {
   const keys = Object.keys(S.gym.weights).sort(), last = keys.length ? S.gym.weights[keys[keys.length - 1]] : null;
-  const input = el("input", { type: "text", inputmode: "decimal", placeholder: last ? last.toFixed(1) : "80.0", class: "kg" });
+  const input = el("input", { type: "text", inputmode: "decimal", placeholder: last ? last.toFixed(1) : "80.0", "aria-label": "Weight in kilograms" });
   let close;
   const save = () => {
     const m = /^\s*(\d{2,3})(?:[.,](\d))?\s*$/.exec(input.value);
@@ -181,18 +228,19 @@ function weighSheet() {
   };
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
   close = sheet("Weigh in", last ? `Last time: ${last.toFixed(1)} kg, ${dayName(keys[keys.length - 1]).toLowerCase()}` : "Same time of day each time gives fair numbers.",
-    el("div", { class: "add" }, input, el("span", { class: "unit" }, "kg")),
+    el("div", { class: "field kg" }, input, el("span", { class: "unit" }, "kg")),
     el("div", { class: "row end" }, el("button", { class: "ghost", onclick: () => close() }, "Cancel"),
       el("button", { class: "primary", onclick: save }, "Save")));
   setTimeout(() => input.focus(), 50);
 }
 
 // ---------------------------------------------------------------- views
-function header(title, sub) {
+function header(title, sub, over) {
   return el("header", {},
-    el("div", {}, el("h1", {}, title), sub ? el("p", { class: "sub" }, sub) : null),
-    el("button", { class: "icon", "aria-label": "Refresh", onclick: () => guard(load) }, "↻"));
+    el("div", { class: "grow" }, over ? el("p", { class: "over caps" }, over) : null, el("h1", {}, title), sub ? el("p", { class: "sub" }, sub) : null),
+    el("button", { class: "icon", "aria-label": "Refresh", onclick: () => guard(load) }, icon("refresh")));
 }
+const section = (title, extra) => el("h2", { class: "sec" }, title, extra || null);
 
 function taskSub(t) {
   const bits = [];
@@ -220,32 +268,34 @@ function viewToday() {
   const [, m, d] = t0.split("-").map(Number);
   const w = S.weather, wd = (S.days[t0] || {}).weather;
   const wxText = w ? `${WX[w.icon] || ""} ${w.temp}° ${w.text}` : wd ? `${WX[wd.icon] || ""} ${wd.max}° / ${wd.min}°` : "";
-  const out = [header(`${L.LONG[L.weekday(t0)]} ${d} ${L.MONTHS[m - 1]}`, wxText)];
+  const out = [header(`${d} ${L.MONTHS[m - 1]}`, wxText, L.LONG[L.weekday(t0)])];
   out.push(timeline(t0));
 
-  const list = el("section", { class: "card" },
-    el("h2", {}, "To do", due.length ? el("span", { class: `count ${late ? "late" : ""}` }, String(due.length)) : null));
-  if (!due.length) list.append(el("p", { class: "empty" }, "Nothing waiting. Enjoy your day."));
+  out.push(section("To do", due.length ? el("span", { class: `count ${late ? "late" : ""}` }, String(due.length)) : null));
+  const list = el("section", { class: "card" });
+  if (!due.length) list.append(empty("check", "Nothing waiting. Enjoy your day."));
   for (const t of due) {
     const recurring = t.rule.type !== "once";
-    list.append(el("div", { class: "item stack" },
-      el("div", { class: "grow" }, el("div", { class: "title" }, t.name), el("div", { class: `sub ${t.next_due < t0 ? "late" : ""}` }, taskSub(t))),
-      el("div", { class: "actions" },
-        el("button", { class: "ghost", onclick: () => changeTask(t.id, (x) => L.snoozeDays(x, 1, today()), `“${t.name}” moved to tomorrow.`) }, "Tomorrow"),
-        recurring ? el("button", { class: "ghost", onclick: () => changeTask(t.id, (x) => L.complete(x, true, today()), `Skipped “${t.name}” this time.`) }, "Skip") : null,
-        el("button", { class: "primary", onclick: () => changeTask(t.id, (x) => L.complete(x, false, today()), `Done: ${t.name}`) }, "Done"))));
+    list.append(el("div", { class: "task", "data-key": `task:${t.id}`, "data-exit": "" },
+      el("div", { class: "title" }, t.name), el("div", { class: `sub ${t.next_due < t0 ? "late" : ""}` }, taskSub(t)),
+      el("div", { class: "task-actions" },
+        el("button", { class: "ghost sm", onclick: () => changeTask(t.id, (x) => L.snoozeDays(x, 1, today()), `“${t.name}” moved to tomorrow.`) }, "Tomorrow"),
+        recurring ? el("button", { class: "ghost sm", onclick: () => changeTask(t.id, (x) => L.complete(x, true, today()), `Skipped “${t.name}” this time.`) }, "Skip") : null,
+        el("button", { class: "primary sm", onclick: () => changeTask(t.id, (x) => L.complete(x, false, today()), `Done: ${t.name}`) }, icon("check"), "Done"))));
   }
   out.push(list);
+  out.push(section("This week"));
   out.push(thisWeek(t0));
   return out;
 }
 
 // Today as a timeline: partner's shift (leaves / home), gym, dinner, your calendar, in time order.
+const TL_ICON = { partner: "person", gym: "gym", dinner: "dinner", event: "calendar" };
 function timeline(t0) {
   const info = S.days[t0];
   const box = el("section", { class: "card tl" });
   if (!info) {
-    box.append(el("p", { class: "empty" }, "Open the PC app once today to see shifts and plans here."));
+    box.append(empty("clock", "Open the PC app once today to see shifts and plans here."));
     return box;
   }
   const ev = [];                                   // {at, title, sub, kind, action, done}
@@ -260,10 +310,10 @@ function timeline(t0) {
     const n = L.weekCount(S.gym, L.mondayOf(t0));
     const done = g.status === G.DONE;
     const what = gymLabels(1)[t0];
-    ev.push({ at: S.gym.time, title: (done ? "Gym ✓" : "Gym") + (what ? ` · ${what}` : ""), sub: `${n} of ${S.gym.goal} this week`, kind: "gym", done,
+    ev.push({ at: S.gym.time, title: "Gym" + (what ? ` · ${what}` : ""), sub: `${done ? "Done · " : ""}${n} of ${S.gym.goal} this week`, kind: "gym", done,
       action: done
-        ? el("button", { class: "ghost", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0, false), "Visit removed.") }, "Undo")
-        : el("button", { class: "primary", onclick: () => sessionSheet(t0) }, "Done") });
+        ? el("button", { class: "ghost sm", onclick: () => changeGym((s) => L.gymActions.markDone(s, t0, false), "Visit removed.") }, "Undo")
+        : el("button", { class: "primary sm", onclick: () => sessionSheet(t0) }, "Done") });
   }
   if (info.dinner || away) {
     ev.push({ at: DINNER_AT, title: info.dinner ? `Dinner: ${info.dinner}` : "Dinner", sub: away ? "Eating alone tonight" : "", kind: "dinner" });
@@ -276,34 +326,34 @@ function timeline(t0) {
   ev.sort((x, y) => x.at.localeCompare(y.at));
 
   let status;
-  if (shifts.length) status = away ? ["🌙", `Partner on ${shiftKind(shifts[0][0], shifts[shifts.length - 1][1])}`, "away"] : ["🍽️", "Partner on lunch shift, home for dinner", "work"];
-  else if (info.partner_known) status = ["🏠", "Partner is off today", "home"];
-  else status = ["❔", "Partner's schedule isn't out yet", "unknown"];
-  box.append(el("div", { class: `tl-status ${status[2]}` }, el("span", {}, status[0]), status[1]));
-  for (const t of allDay) box.append(el("div", { class: "tl-allday" }, "All day · " + t));
-  if (L.weighStatus(S.gym, t0).due) box.append(el("div", { class: "tl-weigh" }, el("span", {}, "⚖️"),
+  if (shifts.length) status = away ? ["moon", `Partner on ${shiftKind(shifts[0][0], shifts[shifts.length - 1][1])}`, "away"] : ["dinner", "Partner on lunch shift, home for dinner", "work"];
+  else if (info.partner_known) status = ["home", "Partner is off today", "home"];
+  else status = ["help", "Partner's schedule isn't out yet", "unknown"];
+  box.append(el("div", { class: `well tl-status ${status[2]}` }, bubble(status[0]), el("div", { class: "title grow" }, status[1])));
+  if (L.weighStatus(S.gym, t0).due) box.append(el("div", { class: "well tl-weigh", "data-key": "weigh-due" }, bubble("scale"),
     el("div", { class: "grow" }, el("div", { class: "title" }, "Weigh-in day"), el("div", { class: "sub" }, `Every ${S.gym.weigh_every} days`)),
-    el("button", { class: "primary", onclick: weighSheet }, "Log")));
+    el("button", { class: "primary sm", onclick: weighSheet }, "Log")));
+  for (const t of allDay) box.append(el("div", { class: "tl-allday" }, icon("calendar"), "All day · " + t));
 
   if (!ev.length) {
-    box.append(el("p", { class: "empty" }, "Nothing planned today."));
+    box.append(el("p", { class: "empty plain", style: "margin-top:14px" }, "Nothing planned today."));
     return box;
   }
   const now = nowHM();
   let nowShown = false;
+  const nowRow = () => el("div", { class: "tl-now", "aria-label": `Now, ${now}` },
+    el("div", { class: "tl-time" }, now), el("div", { class: "tl-node" }, el("span", { class: "dot" })), el("div", { class: "line" }));
   const rail = el("div", { class: "tl-rail" });
-  for (const e of ev) {
-    if (!nowShown && e.at > now) {
-      rail.append(el("div", { class: "tl-now" }, el("span", {}, now)));
-      nowShown = true;
-    }
-    rail.append(el("div", { class: `tl-item ${e.kind} ${e.at <= now ? "past" : ""} ${e.done ? "done" : ""}` },
+  ev.forEach((e, i) => {
+    if (!nowShown && e.at > now) { rail.append(nowRow()); nowShown = true; }
+    const end = e.kind.includes("end");
+    rail.append(el("div", { class: `tl-item ${e.kind} ${e.at <= now ? "past" : ""} ${e.done ? "done" : ""}`, "data-key": `tl:${i}` },
       el("div", { class: "tl-time" }, e.at),
-      el("div", { class: "tl-dot" }),
+      el("div", { class: "tl-node" }, el("span", { class: "bubble" }, end ? null : icon(e.done ? "check" : TL_ICON[e.kind]))),
       el("div", { class: "grow" }, el("div", { class: "title" }, e.title), e.sub ? el("div", { class: "sub" }, e.sub) : null),
       e.action || null));
-  }
-  if (!nowShown) rail.append(el("div", { class: "tl-now" }, el("span", {}, now)));
+  });
+  if (!nowShown) rail.append(nowRow());
   box.append(rail);
   box.append(updatedNote());
   return box;
@@ -323,7 +373,7 @@ function thisWeek(t0) {
   const end = L.addDays(t0, 7);
   const byDay = {};
   for (const t of S.tasks) for (const x of L.occurrences(t, L.addDays(t0, 1), end)) (byDay[x] = byDay[x] || []).push(t.name);
-  const box = el("section", { class: "card" }, el("h2", {}, "This week"));
+  const box = el("section", { class: "card" });
   const labels = gymLabels(8);
   for (let i = 1; i <= 7; i++) {
     const x = L.addDays(t0, i);
@@ -337,18 +387,18 @@ function thisWeek(t0) {
     if (info.dinner) bits.push(el("span", { class: "dinner" }, info.dinner));
     const chores = byDay[x] || [];
     const wx = info.weather;
-    box.append(el("div", { class: "wk" },
-      el("div", { class: "wk-day" }, el("b", {}, L.NAMES[L.weekday(x)]),
-        el("span", {}, `${Number(x.slice(8))}`), wx ? el("span", { class: "wk-wx" }, `${WX[wx.icon] || ""}${wx.max}°`) : null),
+    box.append(el("div", { class: "wk", "data-key": `wk:${x}` },
+      el("div", { class: "wk-day" }, el("b", {}, L.NAMES[L.weekday(x)]), el("span", {}, `${Number(x.slice(8))}`)),
       el("div", { class: "grow" },
-        bits.length ? el("div", { class: "wk-line" }, ...bits.flatMap((bEl, k) => (k ? [el("i", {}, " · "), bEl] : [bEl]))) : el("div", { class: "wk-line muted" }, "Nothing planned"),
-        chores.length ? el("div", { class: "wk-chores" }, chores.join(", ")) : null)));
+        bits.length ? el("div", { class: "wk-line" }, ...bits) : el("div", { class: "wk-line muted" }, "Nothing planned"),
+        chores.length ? el("div", { class: "wk-chores" }, chores.join(", ")) : null),
+      wx ? el("div", { class: "wk-wx" }, `${WX[wx.icon] || ""} ${wx.max}°`) : null));
   }
   return box;
 }
 
 const STATUS = {
-  [G.DONE]: ["Done ✓", "ok"], [G.PLANNED]: [null, "accent"], [G.MISSED]: ["Missed", "late"],
+  [G.DONE]: ["Done", "ok"], [G.PLANNED]: [null, "accent"], [G.MISSED]: ["Missed", "late"],
   [G.BUSY]: ["Busy", "muted"], [G.SKIPPED]: ["Not this day", "muted"], [G.REST]: ["Rest", "faint"],
 };
 
@@ -368,20 +418,26 @@ function viewGym() {
   const groupsOf = doneToday || ((S.gym.splits.find((sp) => sp.name === nextName) || {}).groups || []);
   const since = L.groupDays(S.gym, t0);
   out.push(el("section", { class: "card next" },
-    el("div", { class: "sub caps" }, doneToday ? "Trained today" : "Next session"),
-    el("div", { class: "big" }, (nextName || "—") + (doneToday ? " ✓" : "")),
-    el("div", { class: "sub" }, doneToday ? "Nice work." : nextDay ? `${dayName(nextDay)} at ${S.gym.time}` : "Next time you go"),
-    el("div", { class: "pills" }, ...groupsOf.map((g) => pill("gym", cap1(g)))),
-    el("div", { class: "groups-grid" }, ...L.GROUPS.map((g) => {
-      const d = since[g], cls = d === null ? "never" : d <= 4 ? "fresh" : d <= 8 ? "soon" : "due";
-      return el("div", { class: `grp ${cls}` }, el("b", {}, cap1(g)),
-        el("span", {}, d === null ? "not yet" : d === 0 ? "today" : d === 1 ? "yesterday" : `${d} days`));
-    })),
+    el("div", { class: "next-top", "data-key": "next" },
+      el("div", { class: "grow" },
+        el("div", { class: "caps" }, doneToday ? "Trained today" : "Next session"),
+        el("div", { class: "big" }, nextName || "—"),
+        el("div", { class: "sub" }, doneToday ? "Nice work." : nextDay ? `${dayName(nextDay)} at ${S.gym.time}` : "Next time you go")),
+      ring(n, S.gym.goal)),
+    groupsOf.length ? el("div", { class: "pills" }, ...groupsOf.map((g) => pill("gym", cap1(g)))) : null,
     !doneToday ? el("button", { class: "primary wide", onclick: () => sessionSheet(t0) }, "Log today's session") : null));
+
+  out.push(section("Last trained"));
+  out.push(el("section", { class: "card" }, el("div", { class: "groups-grid" }, ...L.GROUPS.map((g) => {
+    const d = since[g], cls = d === null ? "never" : d <= 4 ? "fresh" : d <= 8 ? "soon" : "due";
+    return el("div", { class: `grp ${cls}`, "data-key": `grp:${g}` }, el("b", {}, cap1(g)),
+      el("span", {}, d === null ? "not yet" : d === 0 ? "today" : d === 1 ? "yesterday" : `${d} days`));
+  }))));
 
   for (const [offset, title] of [[0, "This week"], [7, "Next week"]]) {
     const plan = gymWeek(L.addDays(mon, offset));
-    const box = el("section", { class: "card" }, el("h2", {}, title));
+    out.push(section(title));
+    const box = el("section", { class: "card" });
     for (const e of plan) {
       const [label, cls] = STATUS[e.status];
       const x = e.date;
@@ -393,24 +449,24 @@ function viewGym() {
       else if (e.status === G.SKIPPED || S.gym.picked.includes(x)) btn = ["Undo", "ghost", () => changeGym((s) => L.gymActions.reset(s, x), "Back to the automatic plan.")];
       else btn = ["Go this day", "ghost", () => changeGym((s) => L.gymActions.pick(s, x), "Gym planned.")];
       const what = (e.status === G.PLANNED || e.status === G.DONE) ? labels[x] : null;
-      box.append(el("div", { class: `item ${x === t0 ? "is-today" : ""}` },
+      box.append(el("div", { class: `gday ${x === t0 ? "is-today" : ""}`, "data-key": `gday:${x}` },
         el("div", { class: "when" }, dayName(x)),
         el("div", { class: "grow" },
           el("div", { class: `title ${cls}` }, label || `Gym ${S.gym.time}`),
           what || e.why ? el("div", { class: "sub" }, what || e.why) : null),
-        el("button", { class: btn[1], onclick: btn[2] }, btn[0])));
+        el("button", { class: `${btn[1]} sm`, onclick: btn[2] }, btn[0])));
     }
     out.push(box);
   }
 
   // body weight
   const wk = Object.keys(S.gym.weights).sort(), ws = L.weighStatus(S.gym, t0);
-  const body = el("section", { class: "card" }, el("h2", {}, "Body weight",
-    el("span", { class: `count ${ws.due ? "late" : ""}` }, ws.due ? "due" : `next ${dayName(ws.next).toLowerCase()}`)));
-  if (!wk.length) body.append(el("p", { class: "empty" }, `No weigh-ins yet. Log one and you get a reminder every ${S.gym.weigh_every} days.`));
+  out.push(section("Body weight", el("span", { class: `count ${ws.due ? "late" : ""}` }, ws.due ? "due" : `next ${dayName(ws.next).toLowerCase()}`)));
+  const body = el("section", { class: "card" });
+  if (!wk.length) body.append(empty("scale", `No weigh-ins yet. Log one and you get a reminder every ${S.gym.weigh_every} days.`));
   else {
     const v = (k) => S.gym.weights[k], lastK = wk[wk.length - 1];
-    body.append(el("div", { class: "row" },
+    body.append(el("div", { class: "weight", "data-key": "weight" },
       el("div", { class: "grow" }, el("div", { class: "big" }, `${v(lastK).toFixed(1)} kg`),
         el("div", { class: "sub" }, wk.length > 1 ? `${(v(lastK) - v(wk[wk.length - 2])).toFixed(1).replace(/^(?!-)/, "+")} kg since last · ${(v(lastK) - v(wk[0])).toFixed(1).replace(/^(?!-)/, "+")} kg in total` : dayName(lastK))),
       spark(wk.slice(-20).map(v))));
@@ -421,30 +477,51 @@ function viewGym() {
   // stats
   const weeks = [...Array(8)].map((_, i) => L.weekCount(S.gym, L.addDays(mon, -7 * (7 - i))));
   const year = S.gym.done.filter((x) => x.slice(0, 4) === t0.slice(0, 4)).length;
-  out.push(el("section", { class: "card" }, el("h2", {}, "Stats"),
-    el("div", { class: "stats" },
+  const top = Math.max(S.gym.goal, ...weeks, 1);
+  out.push(section("Stats"));
+  out.push(el("section", { class: "card" },
+    el("div", { class: "stats", "data-key": "stats" },
       el("div", {}, el("b", {}, String(year)), el("span", {}, `visits in ${t0.slice(0, 4)}`)),
       el("div", {}, el("b", {}, (weeks.slice(-4).reduce((a, b) => a + b, 0) / 4).toFixed(1)), el("span", {}, "per week, last 4")),
       el("div", {}, el("b", {}, String(st)), el("span", {}, "weeks at goal"))),
-    el("div", { class: "bars" }, ...weeks.map((c, i) => el("div", { class: `bar ${c >= S.gym.goal ? "ok" : ""} ${i === 7 ? "now" : ""}`,
-      style: `height:${Math.max(4, Math.round(c / Math.max(S.gym.goal, ...weeks, 1) * 100))}%` }, el("span", {}, c || ""))))));
+    el("div", { class: "bars", role: "img", "aria-label": `Visits per week, last 8 weeks: ${weeks.join(", ")}` },
+      el("div", { class: "goal", style: `bottom:${Math.round(S.gym.goal / top * 100)}%` }),
+      ...weeks.map((c, i) => el("div", { class: `bar ${c >= S.gym.goal ? "ok" : ""} ${i === 7 ? "now" : ""}`,
+        style: `height:${Math.max(5, Math.round(c / top * 100))}%` }, el("span", {}, c || "")))),
+    el("div", { class: "bars-cap" }, el("span", {}, "8 weeks ago"), el("span", {}, `Goal ${S.gym.goal} a week`), el("span", {}, "This week"))));
   out.push(el("p", { class: "note" }, (S.busyNote ? S.busyNote + ". " : "") + "Goal, time and preferred days are set in the PC app."));
   return out;
 }
 
+// Visits this week against the goal.
+function ring(n, goal) {
+  const C = 2 * Math.PI * 22, part = goal ? Math.min(n / goal, 1) : 0;
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 58 58"); svg.setAttribute("class", "ring");
+  svg.setAttribute("role", "img"); svg.setAttribute("aria-label", `${n} of ${goal} visits this week`);
+  svg.innerHTML = (part ? `<circle class="arc" cx="29" cy="29" r="22" stroke-dasharray="${(part * C).toFixed(1)} ${C.toFixed(1)}"/>` : "")
+    + `<text x="29" y="29">${Number(n)}/${Number(goal)}</text>`;
+  return svg;
+}
+
 function spark(vals) {
   if (vals.length < 2) return null;
-  const W = 120, H = 44, lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 1);
-  const pts = vals.map((v, i) => `${(i * (W - 8) / (vals.length - 1) + 4).toFixed(1)},${(4 + (hi - v) / span * (H - 8)).toFixed(1)}`).join(" ");
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("class", "spark");
-  svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const W = 124, H = 48, lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 1);
+  const xy = vals.map((v, i) => [i * (W - 12) / (vals.length - 1) + 6, 6 + (hi - v) / span * (H - 16)]);
+  const pts = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const [lx, ly] = xy[xy.length - 1];
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("class", "spark"); svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = `<defs><linearGradient id="sparkfill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="currentColor" stop-opacity=".22"/><stop offset="1" stop-color="currentColor" stop-opacity="0"/></linearGradient></defs>`
+    + `<polygon points="${xy[0][0].toFixed(1)},${H} ${pts} ${lx.toFixed(1)},${H}" fill="url(#sparkfill)"/>`
+    + `<polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>`
+    + `<circle cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="4" fill="currentColor" stroke="var(--bg)" stroke-width="2"/>`;
   return svg;
 }
 
 function viewAdd() {
   const input = el("input", { type: "text", placeholder: "e.g. vacuum every saturday", enterkeyhint: "send",
-    autocapitalize: "sentences" });
+    autocapitalize: "sentences", "aria-label": "New chore" });
   const send = () => guard(async () => {
     const text = input.value.trim();
     if (!text) return;
@@ -456,20 +533,73 @@ function viewAdd() {
   const ex = ["vacuum every saturday", "water plants every 4 days (10m)", "pay rent on the 1st at 10:00",
     "call dentist tomorrow", "descale kettle monthly"];
   return [header("Add a chore", "Write it like you would say it"),
-    el("section", { class: "card" }, el("div", { class: "add" }, input, el("button", { class: "primary", onclick: send }, "Add")),
-      el("h2", { class: "small" }, "Examples"),
-      ...ex.map((x) => el("button", { class: "chip", onclick: () => { input.value = x; input.focus(); } }, x)))];
+    el("section", { class: "card" }, el("div", { class: "field" }, input, el("button", { class: "primary", onclick: send }, "Add"))),
+    section("Examples"),
+    el("section", { class: "card" }, el("div", { class: "chips" },
+      ...ex.map((x) => el("button", { class: "chip", onclick: () => { input.value = x; input.focus(); } }, x))))];
+}
+
+// ---------------------------------------------------------------- render, with gentle motion when things change
+const VIEWS = { today: viewToday, gym: viewGym, add: viewAdd };
+const EASE = "cubic-bezier(.22,.8,.26,1)";
+
+// Where every keyed element sits (relative to its section), so the next paint can glide from there.
+function snapshot(main) {
+  const map = new Map();
+  for (const sec of main.children) {
+    const top = sec.getBoundingClientRect().top;
+    map.set(`sec:${sec.dataset.sec}`, { top });
+    for (const k of sec.querySelectorAll("[data-key]")) {
+      const r = k.getBoundingClientRect();
+      map.set(k.dataset.key, { top: r.top - top, rect: r, text: k.textContent, node: k });
+    }
+  }
+  return map;
+}
+function settle(main, before) {
+  const seen = new Set();
+  const slide = (node, dy) => { if (Math.abs(dy) > 1) node.animate([{ transform: `translateY(${dy}px)` }, { transform: "none" }], { duration: 380, easing: EASE }); };
+  for (const sec of main.children) {
+    const top = sec.getBoundingClientRect().top, old = before.get(`sec:${sec.dataset.sec}`);
+    if (old) slide(sec, old.top - top);
+    for (const k of sec.querySelectorAll("[data-key]")) {
+      const was = before.get(k.dataset.key);
+      seen.add(k.dataset.key);
+      if (!was) k.animate([{ opacity: 0, transform: "scale(.97)" }, { opacity: 1, transform: "none" }], { duration: 320, easing: EASE });
+      else if (Math.abs(was.top - (k.getBoundingClientRect().top - top)) > 1) slide(k, was.top - (k.getBoundingClientRect().top - top));
+      else if (was.text !== k.textContent) k.animate([{ opacity: .3 }, { opacity: 1 }], { duration: 320, easing: "ease-out" });
+    }
+  }
+  for (const [key, was] of before) {              // what left fades out where it was
+    if (!was.node || seen.has(key) || !was.node.hasAttribute("data-exit")) continue;
+    const g = was.node;
+    g.classList.add("ghost-out");
+    g.style.cssText = `left:${was.rect.left}px;top:${was.rect.top}px;width:${was.rect.width}px`;
+    document.body.append(g);
+    g.animate([{ opacity: 1, transform: "none" }, { opacity: 0, transform: "scale(.96)" }], { duration: 220, easing: "ease-in" })
+      .finished.then(() => g.remove(), () => g.remove());
+  }
 }
 
 let shownTab = null;
 function render() {
   const main = $("main");
-  main.replaceChildren(...({ today: viewToday, gym: viewGym, add: viewAdd }[S.tab])());
-  if (shownTab !== S.tab) {        // animate only when the view changes, not after every tap
+  const swap = shownTab !== S.tab;
+  const before = swap || calm.matches || !main.animate ? null : snapshot(main);
+  const kids = VIEWS[S.tab]();
+  kids.forEach((k, i) => { k.dataset.sec = i; });
+  main.replaceChildren(...kids);
+  if (swap) {                      // the whole view rises in only when the tab changes, not after every tap
     main.classList.remove("enter"); void main.offsetWidth; main.classList.add("enter");
+    if (shownTab) window.scrollTo(0, 0);
     shownTab = S.tab;
-  }
-  for (const b of document.querySelectorAll("nav button")) b.classList.toggle("on", b.dataset.tab === S.tab);
+  } else if (before) settle(main, before);
+  const tabs = [...document.querySelectorAll("nav button")];
+  tabs.forEach((b) => {
+    b.classList.toggle("on", b.dataset.tab === S.tab);
+    if (b.dataset.tab === S.tab) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
+  });
+  $("nav").style.setProperty("--i", Math.max(0, tabs.findIndex((b) => b.dataset.tab === S.tab)));
 }
 
 function signInScreen(error) {
@@ -499,11 +629,13 @@ async function start() {
 
 // First load shows a placeholder, and a retry card if OneDrive can't be reached.
 async function firstLoad() {
-  $("main").replaceChildren(el("section", { class: "card" }, el("p", { class: "empty" }, "Loading your chores…")));
+  const skel = (cls) => el("div", { class: `card skel ${cls || ""}`, "aria-hidden": "true" }, el("i"), el("i"), el("i"));
+  $("main").replaceChildren(skel("head"), skel(), skel(), el("p", { class: "loading", role: "status" }, "Loading your chores…"));
   try { await load(); } catch (e) {
     console.error(e);
-    $("main").replaceChildren(el("section", { class: "card" },
-      el("h2", {}, "Couldn't reach OneDrive"), el("p", { class: "empty" }, e.message || String(e)),
+    $("main").replaceChildren(el("section", { class: "card center" },
+      bubble("alert"),
+      el("h2", {}, "Couldn't reach OneDrive"), el("p", {}, e.message || String(e)),
       el("button", { class: "primary", onclick: firstLoad }, "Try again")));
   }
 }
