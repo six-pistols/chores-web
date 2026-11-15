@@ -177,3 +177,7 @@ h2 .count.late { color: var(--late); }
 .wk-line .partner { color: var(--c-partner); } .wk-line .home { color: var(--ok); } .wk-line .gym { color: var(--c-gym); }
 .wk-line .event { color: var(--c-event); } .wk-line .dinner { color: var(--c-dinner); }
 .wk-chores { font-size: 13px; color: var(--mut); margin-top: 3px; }
+body.working header button.icon { animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.updated { font-size: 12px; color: var(--mut); margin: 10px 0 0 4px; }
+.updated.late { color: var(--late); }

@@ -44,7 +44,14 @@ function toast(text, undo) {
   toast.timer = setTimeout(hideToast, 5000);
 }
 function hideToast() { $("#toast").hidden = true; }
-function busy(on) { document.body.classList.toggle("busy", on); }
+// Saving takes a OneDrive round trip; only dim the page if it is slow, and spin the refresh button meanwhile.
+let busyTimer = null;
+function busy(on) {
+  clearTimeout(busyTimer);
+  document.body.classList.toggle("working", on);
+  if (on) busyTimer = setTimeout(() => document.body.classList.add("busy"), 600);
+  else document.body.classList.remove("busy");
+}
 
 async function guard(fn) {
   busy(true);
@@ -63,6 +70,9 @@ async function load() {
   S.busy = phone.data.busy || {};
   S.days = phone.data.days || {};
   S.weather = phone.data.weather || null;
+  S.generated = phone.data.generated || null;
+  const age = S.generated ? (Date.now() - new Date(S.generated).getTime()) / 3.6e6 : Infinity;
+  if (age > 3) S.weather = null;            // old "now" weather would mislead; the day's high/low still shows
   S.busyNote = phone.data.generated ? `Calendar from your PC, ${dayName(phone.data.generated.slice(0, 10)).toLowerCase()} ${phone.data.generated.slice(11, 16)}` : "";
   S.loaded = new Date();
   render();
@@ -214,7 +224,17 @@ function timeline(t0) {
   }
   if (!nowShown) rail.append(el("div", { class: "tl-now" }, el("span", {}, now)));
   box.append(rail);
+  box.append(updatedNote());
   return box;
+}
+
+// When the PC last sent shifts, calendar and weather; flagged when that is more than a few hours ago.
+function updatedNote() {
+  if (!S.generated) return null;
+  const g = new Date(S.generated), hours = (Date.now() - g.getTime()) / 3.6e6;
+  const when = `${dayName(S.generated.slice(0, 10)).toLowerCase()} ${S.generated.slice(11, 16)}`;
+  return el("p", { class: `updated ${hours > 6 ? "late" : ""}` },
+    hours > 6 ? `From your PC ${when}: may be out of date. Open the PC app to update.` : `Updated from your PC ${when}`);
 }
 
 // The next seven days, one compact row each.
