@@ -133,6 +133,11 @@ function taskSub(t) {
 
 const WX = { w_sun: "☀️", w_partly: "⛅", w_cloud: "☁️", w_rain: "🌧️", w_snow: "🌨️", w_thunder: "⛈️", w_fog: "🌫️", w_wind: "💨" };
 const DINNER_AT = "19:00";
+// Same rule as the PC: still at work at dinner time = evening shift.
+function shiftKind(a, b) {
+  const evening = a < DINNER_AT && b >= DINNER_AT || b < a;
+  return !evening ? "lunch shift" : a < "14:00" ? "lunch + evening shift" : "evening shift";
+}
 const nowHM = () => { const n = new Date(); return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`; };
 const splitTime = (line) => { const m = /^(\d{1,2}[:.]\d{2})\s+(.*)$/.exec(line); return m ? [m[1].replace(".", ":").padStart(5, "0"), m[2]] : [null, line]; };
 
@@ -175,7 +180,7 @@ function timeline(t0) {
   const shifts = info.partner || [];
   const away = shifts.some((x) => x[2]);
   for (const [a, b] of shifts) {
-    ev.push({ at: a, title: "Partner at work", sub: `until ${b}`, kind: "partner" });
+    ev.push({ at: a, title: `Partner: ${shiftKind(a, b)}`, sub: `until ${b}`, kind: "partner" });
     ev.push({ at: b, title: "Partner home", kind: "partner end" });
   }
   const g = gymWeek(L.mondayOf(t0))[L.weekday(t0)];
@@ -198,7 +203,7 @@ function timeline(t0) {
   ev.sort((x, y) => x.at.localeCompare(y.at));
 
   let status;
-  if (shifts.length) status = away ? ["🌙", "Partner works this evening", "away"] : ["💼", "Partner works, home for dinner", "work"];
+  if (shifts.length) status = away ? ["🌙", `Partner on ${shiftKind(shifts[0][0], shifts[shifts.length - 1][1])}`, "away"] : ["🍽️", "Partner on lunch shift, home for dinner", "work"];
   else if (info.partner_known) status = ["🏠", "Partner is off today", "home"];
   else status = ["❔", "Partner's schedule isn't out yet", "unknown"];
   box.append(el("div", { class: `tl-status ${status[2]}` }, el("span", {}, status[0]), status[1]));
@@ -248,7 +253,7 @@ function thisWeek(t0) {
     const gd = gymWeek(L.mondayOf(x))[L.weekday(x)];
     const info = S.days[x] || {};
     const bits = [];
-    for (const [a, b, eve] of info.partner || []) bits.push(el("span", { class: "partner" }, eve ? `Partner till ${b} 🌙` : `Partner ${a}–${b}`));
+    for (const [a, b, eve] of info.partner || []) bits.push(el("span", { class: "partner" }, `Partner ${shiftKind(a, b).replace(" shift", "")} ${a}–${b}${eve ? " 🌙" : ""}`));
     if (!(info.partner || []).length && info.partner_known) bits.push(el("span", { class: "home" }, "Partner off"));
     if (gd.status === G.PLANNED || gd.status === G.DONE) bits.push(el("span", { class: "gym" }, `Gym ${S.gym.time}`));
     for (const e of info.events || []) bits.push(el("span", { class: "event" }, e));
