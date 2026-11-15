@@ -167,7 +167,7 @@ function viewToday() {
     const gd = gymWeek(L.mondayOf(x))[L.weekday(x)];
     const info = S.days[x] || {};
     const pills = [
-      ...(info.partner || []).map(([a, b, eve]) => pill("partner", `Partner ${a}–${b}${eve ? " · evening" : ""}`)),
+      ...(info.partner || []).map(([a, b, eve]) => pill("partner", `Partner works ${a}–${b}${eve ? ", not home for dinner" : ""}`)),
       ...(info.events || []).map((e) => pill("event", e)),
       gd.status === G.PLANNED ? pill("gym", `Gym ${S.gym.time}`) : null,
       info.dinner ? pill("dinner", info.dinner) : null,
@@ -209,7 +209,7 @@ function todayCard(t0) {
   let head, sub, mood;
   if (shifts.length) {
     head = evening ? "Partner works this evening" : "Partner works, home for dinner";
-    sub = shifts.map(([a, b]) => `${a}–${b}`).join(", ");
+    sub = "Working " + shifts.map(([a, b]) => `${a} to ${b}`).join(" and ");
     mood = evening ? "away" : "work";
   } else if (info.partner_known) {
     head = "Partner is off today"; sub = "Home all day"; mood = "home";
