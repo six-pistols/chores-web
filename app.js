@@ -8,7 +8,8 @@ const GYM_DEFAULTS = { goal: 3, time: "17:00", minutes: 75, prefer: [], done: []
 const DEMO = new URLSearchParams(location.search).has("demo") && /^(localhost|127\.0\.0\.1)$/.test(location.hostname);
 const Store = DEMO ? demoStore() : Cloud;
 
-const S = { tab: "today", tasks: [], gym: { ...GYM_DEFAULTS }, busy: {}, loaded: null, busyNote: "", undo: null };
+const S = { tab: "today", tasks: [], gym: { ...GYM_DEFAULTS }, busy: {}, loaded: null, busyNote: "", undo: null,
+  shop: { items: [], rotation: [] } };
 const $ = (sel) => document.querySelector(sel);
 
 // ---------------------------------------------------------------- helpers
@@ -26,6 +27,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const ICONS = {
   refresh: '<path d="M20 11a8 8 0 1 0-2.3 6.4"/><path d="M20 4v7h-7"/>',
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  bag: '<path d="M5 8.5h14l-1 12H6z"/><path d="M8.5 8.5a3.5 3.5 0 0 1 7 0"/>',
+  x: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6 10v9h12v-9"/>',
   dinner: '<path d="M6 3v6a3 3 0 0 0 6 0V3M9 3v18"/><path d="M17 21V3c-2 2-3 4.5-3 8.5h3"/>',
@@ -93,11 +96,13 @@ async function guard(fn) {
 
 // ---------------------------------------------------------------- data
 async function load() {
-  const [tasks, gym, phone] = await Promise.all([
+  const [tasks, gym, phone, shop] = await Promise.all([
     Store.readJSON("tasks.json", { version: 1, tasks: [] }),
     Store.readJSON("gym.json", { ...GYM_DEFAULTS }),
     Store.readJSON("phone.json", { busy: {} }),
+    Store.readJSON("shopping.json", { items: [], rotation: [] }),
   ]);
+  S.shop = { items: [], rotation: [], ...shop.data };
   S.tasks = tasks.data.tasks || [];
   S.gym = { ...GYM_DEFAULTS, ...gym.data };
   S.busy = phone.data.busy || {};
@@ -539,8 +544,105 @@ function viewAdd() {
       ...ex.map((x) => el("button", { class: "chip", onclick: () => { input.value = x; input.focus(); } }, x))))];
 }
 
+// ---------------------------------------------------------------- shopping list (shopping.json, shared with the PC app)
+// Ticks show at once and are saved in the background, one after another, so it keeps up while you
+// walk the aisles. Each change is re-applied to the latest file, so the PC and phone never overwrite each other.
+const STAPLES = ["Mjölk", "Bröd", "Smör", "Ägg", "Ost", "Kaffe", "Bananer", "Tomater", "Gurka", "Yoghurt", "Pasta", "Potatis",
+  "Gul lök", "Kycklingfilé", "Köttfärs", "Toalettpapper", "Diskmedel", "Hushållspapper", "Kattmat", "Kattsand"];
+let shopQueue = Promise.resolve();
+function changeShop(fn, text) {
+  const local = JSON.parse(JSON.stringify(S.shop));
+  fn(local);
+  S.shop = local;
+  render();
+  if (text) toast(text);
+  shopQueue = shopQueue.then(async () => {
+    try {
+      const { data } = await Store.update("shopping.json", { items: [], rotation: [] }, (d) => {
+        d.items = d.items || []; d.rotation = d.rotation || [];
+        fn(d);
+      });
+      S.shop = { items: [], rotation: [], ...data };
+    } catch (e) {
+      console.error(e);
+      toast("Couldn't save the list (no signal?). It is reloaded; try again.");
+      try { await load(); } catch (_) { /* keep what is shown */ }
+    }
+  });
+}
+const shopAdd = (name) => (d) => {           // same rules as chores_home.add_item
+  name = name.trim();
+  if (!name) return;
+  const f = ((d.freq = d.freq || {})[name.toLowerCase()] = d.freq[name.toLowerCase()] || { name, n: 0 });
+  f.n += 1;
+  if (d.items.some((i) => i.name.toLowerCase() === name.toLowerCase() && !i.done)) return;
+  d.items.push({ id: Math.random().toString(16).slice(2, 10).padEnd(8, "0"), name, note: "", done: false, source: null, added: today() });
+};
+const shopToggle = (id) => (d) => { const i = d.items.find((x) => x.id === id); if (i) i.done = !i.done; };
+const shopRemove = (id) => (d) => {          // same as chores_home.remove_item
+  const i = d.items.find((x) => x.id === id), src = (i && i.source) || "";
+  for (const r of d.rotation) if (src === `rotation:${r.id}`) r.last_bought = today();
+  d.items = d.items.filter((x) => x.id !== id);
+};
+const shopFinish = (d) => {                  // same as chores_home.finish_shop
+  for (const i of d.items.filter((x) => x.done)) for (const r of d.rotation) if ((i.source || "") === `rotation:${r.id}`) r.last_bought = today();
+  d.items = d.items.filter((x) => !x.done);
+};
+function shopSuggestions(q) {
+  const waiting = new Set(S.shop.items.filter((i) => !i.done).map((i) => i.name.toLowerCase()));
+  const own = Object.values(S.shop.freq || {}).sort((a, b) => b.n - a.n).map((v) => v.name);
+  const seen = new Set(), pool = [];
+  for (const n of own.concat(STAPLES)) { const k = n.toLowerCase(); if (!seen.has(k) && !waiting.has(k)) { seen.add(k); pool.push(n); } }
+  q = q.trim().toLowerCase();
+  if (!q) return pool.slice(0, 12);
+  return pool.filter((n) => n.toLowerCase().startsWith(q) || n.toLowerCase().split(" ").some((w) => w.startsWith(q))).slice(0, 8);
+}
+
+function viewShop() {
+  const items = S.shop.items, left = items.filter((i) => !i.done), got = items.filter((i) => i.done);
+  const sub = items.length ? `${left.length} to buy${got.length ? ` · ${got.length} in the basket` : ""}` : "The list is empty";
+  const out = [header("Shopping", sub)];
+
+  const input = el("input", { type: "text", placeholder: "Add an item", enterkeyhint: "done", autocapitalize: "sentences",
+    "aria-label": "Add to shopping list" });
+  const chips = el("div", { class: "chips" });
+  let active = false;                 // suggestions only while adding, so the list stays on top in the shop
+  const fill = () => chips.replaceChildren(...(active || input.value ? shopSuggestions(input.value).slice(0, 9) : []).map((n) =>
+    el("button", { class: "chip", onpointerdown: (e) => e.preventDefault(), onclick: () => { changeShop(shopAdd(n)); } }, "+ " + n)));
+  input.addEventListener("focus", () => { active = true; fill(); });
+  input.addEventListener("blur", () => { active = false; setTimeout(fill, 150); });
+  const add = () => {
+    const name = input.value.trim();
+    if (!name) return;
+    changeShop(shopAdd(name));
+    input.value = "";
+    fill();
+    input.focus();
+  };
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") add(); });
+  input.addEventListener("input", fill);
+  fill();
+  out.push(el("section", { class: "card" }, el("div", { class: "field" }, input, el("button", { class: "primary", onclick: add }, "Add")), chips));
+
+  const row = (i) => el("div", { class: `buy ${i.done ? "got" : ""}`, "data-key": `buy:${i.id}` },
+    el("button", { class: "tick", "aria-label": i.done ? `Put ${i.name} back` : `Got ${i.name}`, "aria-pressed": String(!!i.done),
+      onclick: () => changeShop(shopToggle(i.id)) },
+      el("span", { class: "box" }, i.done ? icon("check") : null),
+      el("span", { class: "name" }, i.name, i.note ? el("small", {}, i.note) : null)),
+    el("button", { class: "ghost icon-sm", "aria-label": `Remove ${i.name}`, onclick: () => changeShop(shopRemove(i.id), `Removed ${i.name}.`) }, icon("x")));
+
+  out.push(section("To buy", left.length ? el("span", { class: "count" }, String(left.length)) : null));
+  out.push(el("section", { class: "card list" }, ...(left.length ? left.map(row) : [empty("bag", got.length ? "Everything is in the basket." : "Nothing to buy. Add something above.")])));
+  if (got.length) {
+    out.push(section("In the basket", el("span", { class: "count" }, String(got.length))));
+    out.push(el("section", { class: "card list" }, ...got.map(row),
+      el("button", { class: "primary wide", onclick: () => changeShop(shopFinish, `Shop finished: ${got.length} bought.`) }, icon("check"), "Finish shop")));
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- render, with gentle motion when things change
-const VIEWS = { today: viewToday, gym: viewGym, add: viewAdd };
+const VIEWS = { today: viewToday, gym: viewGym, shop: viewShop, add: viewAdd };
 const EASE = "cubic-bezier(.22,.8,.26,1)";
 
 // Where every keyed element sits (relative to its section), so the next paint can glide from there.
@@ -660,6 +762,11 @@ function demoStore() {
         partner_known: i < 5, events: i === 3 ? ["18:00 Dinner"] : [], dinner: i === 0 ? "Tacos" : undefined,
         weather: { icon: ["w_rain", "w_cloud", "w_partly", "w_sun"][i % 4], max: 8 - i, min: 3 - i } }])) },
     "inbox.txt": "",
+    "shopping.json": { rotation: [], freq: { "mjölk": { name: "Mjölk", n: 5 }, "kattsand": { name: "Kattsand", n: 3 } }, items: [
+      { id: "s1", name: "Mjölk", note: "", done: false, source: null, added: t0 },
+      { id: "s2", name: "Kycklingfilé", note: "for: Tacos", done: false, source: null, added: t0 },
+      { id: "s3", name: "Tortillabröd", note: "", done: true, source: null, added: t0 },
+      { id: "s4", name: "Kattmat", note: "", done: false, source: null, added: t0 }] },
   };
   const copy = (x) => JSON.parse(JSON.stringify(x));
   return {
